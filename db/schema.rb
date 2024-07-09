@@ -10,5 +10,35 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 0) do
+ActiveRecord::Schema[7.1].define(version: 2024_07_09_051257) do
+  create_table "expense_categories", force: :cascade do |t|
+    t.string "name"
+    t.string "desired_source"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+  end
+
+  create_table "expenses", force: :cascade do |t|
+    t.string "name"
+    t.string "frequency"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.integer "expense_category_id", null: false
+    t.index ["expense_category_id"], name: "index_expenses_on_expense_category_id"
+  end
+
+  create_table "transactions", force: :cascade do |t|
+    t.date "date"
+    t.integer "dollars"
+    t.integer "cents"
+    t.string "source"
+    t.text "notes"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.integer "expense_id", null: false
+    t.index ["expense_id"], name: "index_transactions_on_expense_id"
+  end
+
+  add_foreign_key "expenses", "expense_categories"
+  add_foreign_key "transactions", "expenses"
 end
