@@ -1,4 +1,4 @@
-require 'rails_helper'
+require "rails_helper"
 
 RSpec.describe "transactions/show", type: :view do
   before(:each) do
@@ -6,7 +6,7 @@ RSpec.describe "transactions/show", type: :view do
       dollars: 2,
       cents: 3,
       source: "Source",
-      notes: "MyText"
+      notes: "MyText",
     ))
   end
 

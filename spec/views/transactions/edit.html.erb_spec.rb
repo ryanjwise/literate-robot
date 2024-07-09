@@ -1,4 +1,4 @@
-require 'rails_helper'
+require "rails_helper"
 
 RSpec.describe "transactions/edit", type: :view do
   let(:transaction) {
@@ -6,7 +6,7 @@ RSpec.describe "transactions/edit", type: :view do
       dollars: 1,
       cents: 1,
       source: "MyString",
-      notes: "MyText"
+      notes: "MyText",
     )
   }
 
@@ -18,7 +18,6 @@ RSpec.describe "transactions/edit", type: :view do
     render
 
     assert_select "form[action=?][method=?]", transaction_path(transaction), "post" do
-
       assert_select "input[name=?]", "transaction[dollars]"
 
       assert_select "input[name=?]", "transaction[cents]"
