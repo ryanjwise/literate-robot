@@ -22,6 +22,11 @@
   </div>
 
   <div>
+    <%= form.label :expense_category, style: "display: block" %>
+    <%= form.collection_select :expense_category_id, ExpenseCategory.order(:name), :id, :name %>
+  </div>
+
+  <div>
     <%= form.submit %>
   </div>
 <% end %>

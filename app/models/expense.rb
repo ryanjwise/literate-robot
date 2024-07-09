@@ -1,4 +1,5 @@
 class Expense < ApplicationRecord
+  belongs_to :expense_category
   has_many :transactions
 
   enum frequency: {

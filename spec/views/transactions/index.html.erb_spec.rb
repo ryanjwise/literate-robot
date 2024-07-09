@@ -1,10 +1,17 @@
 require "rails_helper"
 
 RSpec.describe "transactions/index", type: :view do
+  let(:expense_category) {
+    ExpenseCategory.create!(
+      name: "MyExpense",
+      desired_source: "MyDesiredSource",
+    )
+  }
   let(:expense) {
     Expense.create!(
       name: "MyString",
       frequency: "monthly",
+      expense_category_id: expense_category.id,
     )
   }
   before(:each) do
