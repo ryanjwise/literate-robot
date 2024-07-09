@@ -1,17 +1,25 @@
 require "rails_helper"
 
 RSpec.describe "transactions/index", type: :view do
+  let(:expense) {
+    Expense.create!(
+      name: "MyString",
+      frequency: "monthly",
+    )
+  }
   before(:each) do
     assign(:transactions, [
       Transaction.create!(
         dollars: 2,
         cents: 3,
+        expense_id: expense.id,
         source: "Source",
         notes: "MyText",
       ),
       Transaction.create!(
         dollars: 2,
         cents: 3,
+        expense_id: expense.id,
         source: "Source",
         notes: "MyText",
       ),

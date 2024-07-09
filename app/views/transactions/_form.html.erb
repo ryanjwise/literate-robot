@@ -27,6 +27,11 @@
   </div>
 
   <div>
+  <%= form.label :expense, style: "display: block" %>
+  <%= form.collection_select :expense_id, Expense.order(:name), :id, :name %>
+</div>
+  
+  <div>
     <%= form.label :source, style: "display: block" %>
     <%= form.text_field :source %>
   </div>

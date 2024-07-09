@@ -1,16 +1,24 @@
 require "rails_helper"
 
 RSpec.describe "transactions/edit", type: :view do
+  let(:expense) {
+    Expense.create!(
+      name: "MyString",
+      frequency: "monthly",
+    )
+  }
   let(:transaction) {
     Transaction.create!(
       dollars: 1,
       cents: 1,
+      expense_id: expense.id,
       source: "MyString",
       notes: "MyText",
     )
   }
 
   before(:each) do
+    assign(:expense, expense)
     assign(:transaction, transaction)
   end
 
