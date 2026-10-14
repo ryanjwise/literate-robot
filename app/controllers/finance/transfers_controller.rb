@@ -1,7 +1,16 @@
 module Finance
   class TransfersController < BaseController
+    SORTS = %w[date amount_cents].freeze
+
+    # Filters: from/to (dates), round_up (true/false), paired (true/false). Newest first.
     def index
-      render json: Transfer.all
+      items = Transfer.all
+      items = items.select { _1[:date] >= date_param(:from, nil) } if params[:from].present?
+      items = items.select { _1[:date] <= date_param(:to, nil) } if params[:to].present?
+      %i[round_up paired].each do |flag|
+        items = items.select { _1[flag] == ActiveModel::Type::Boolean.new.cast(params[flag]) } if params[flag].present?
+      end
+      render json: paginate_array(items, sorts: SORTS, default_sort: "date", tie: :transfer_group_id)
     end
 
     def create

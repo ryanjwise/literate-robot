@@ -38,8 +38,15 @@ info:
     - Transfer legs can only change `description` and `notes`; create and delete transfers via `/finance/transfers`
       (or `link_transfer` / `unlink` when one half is a bank record).
 
+    ## Pagination
+    Every list endpoint returns `{"data": [...], "next_cursor": "..." | null}`, **newest first**. Pass `next_cursor` back
+    as `cursor` to get the next page; `null` means there is no more. Cursors are opaque, stay correct while records change,
+    and only work with the `sort` and `dir` they were issued for (otherwise `400`). Parameters on every list:
+    `limit` (default 100, maximum 500; larger values are capped), `cursor`, `sort` (a per-endpoint set of columns), and
+    `dir` (`desc` default, or `asc`). There are no page numbers, so lists can grow without changing this shape.
+    `link_transfer` and `unlink` return a fixed pair of legs, not a list, and are unchanged.
+
     ## Known gaps (will change shapes)
-    - List endpoints return every row as a plain array, with no pagination.
     - Error bodies are not uniform: a `422` is either `{"errors": {field: [messages]}}` or `{"error": "message"}`
       (see the `Unprocessable` response), and `401`/`404` often have no body.
 servers:
@@ -63,9 +70,15 @@ paths:
     get:
       tags: [Accounts]
       operationId: listAccounts
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Dir" }
+        - { name: sort, in: query, schema: { type: string, enum: [id, name, created_at], default: id } }
       summary: List accounts, each with its computed balance
       responses:
-        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Account" } } } } }
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/AccountPage" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
     post:
       tags: [Accounts]
@@ -117,9 +130,15 @@ paths:
     get:
       tags: [Categories]
       operationId: listCategories
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Dir" }
+        - { name: sort, in: query, schema: { type: string, enum: [id, name, created_at], default: id } }
       summary: List categories
       responses:
-        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Category" } } } } }
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/CategoryPage" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
     post:
       tags: [Categories]
@@ -170,9 +189,15 @@ paths:
     get:
       tags: [Expenses]
       operationId: listExpenses
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Dir" }
+        - { name: sort, in: query, schema: { type: string, enum: [id, name, created_at], default: id } }
       summary: List recurring (or ad hoc) expenses
       responses:
-        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Expense" } } } } }
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ExpensePage" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
     post:
       tags: [Expenses]
@@ -224,8 +249,14 @@ paths:
       tags: [Transactions]
       operationId: listTransactions
       summary: List and search transactions
-      description: Filters combine with AND. Not paginated yet; ordered by id.
+      description: Filters combine with AND. Newest first by date; `sort` may be `date` (default), `amount_cents`, `created_at`, or `id`.
       parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Dir" }
+        - { name: sort, in: query, schema: { type: string, enum: [date, amount_cents, created_at, id], default: date } }
+        - { name: min_amount_cents, in: query, description: "Only amounts at least this large in size (ignores sign), so it works for spending and income.", schema: { type: integer } }
+        - { name: max_amount_cents, in: query, description: "Only amounts at most this large in size (ignores sign).", schema: { type: integer } }
         - { name: status, in: query, schema: { $ref: "#/components/schemas/TransactionStatus" } }
         - { name: kind, in: query, schema: { $ref: "#/components/schemas/TransactionKind" } }
         - { name: account_id, in: query, schema: { type: integer } }
@@ -238,7 +269,7 @@ paths:
           description: Case-insensitive text match on description, notes, and merchant key. `%` and `_` are literal.
           schema: { type: string }
       responses:
-        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Transaction" } } } } }
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/TransactionPage" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
     post:
@@ -390,9 +421,10 @@ paths:
       tags: [Transfers]
       operationId: transferCandidates
       summary: Likely counterparts for link_transfer
-      description: Up to 20 non-transfer transactions on other accounts with the opposite amount, nearest date first.
+      description: Up to 20 non-transfer transactions on other accounts with the opposite amount, nearest date first. Uses the page envelope for consistency; `next_cursor` is always `null`.
       responses:
-        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Transaction" } } } } }
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/TransactionPage" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
@@ -400,9 +432,15 @@ paths:
     get:
       tags: [Merchants]
       operationId: listMerchants
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Dir" }
+        - { name: sort, in: query, schema: { type: string, enum: [id, key, created_at, updated_at], default: id } }
       summary: Merchant memory rules
       responses:
-        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Merchant" } } } } }
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/MerchantPage" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
     post:
       tags: [Merchants]
@@ -454,9 +492,21 @@ paths:
       tags: [Transfers]
       operationId: listTransfers
       summary: Transfers, one entry per transfer (not per leg)
-      description: "Not paginated yet. A transfer with a single leg (e.g. a UP Round Up) has the missing side `null` and `paired: false`."
+      description: |
+        A transfer with a single leg (e.g. a UP Round Up) has the missing side `null` and `paired: false`.
+        Newest first by date; `sort` may be `date` (default) or `amount_cents`.
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Dir" }
+        - { name: sort, in: query, schema: { type: string, enum: [date, amount_cents], default: date } }
+        - { name: from, in: query, description: "Earliest date, inclusive.", schema: { type: string, format: date } }
+        - { name: to, in: query, description: "Latest date, inclusive.", schema: { type: string, format: date } }
+        - { name: round_up, in: query, description: "`false` hides Round Ups; `true` shows only them.", schema: { type: boolean } }
+        - { name: paired, in: query, schema: { type: boolean } }
       responses:
-        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Transfer" } } } } }
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/TransferPage" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
     post:
       tags: [Transfers]
@@ -577,6 +627,21 @@ components:
       description: A key issued for the `finance` namespace.
 
   parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Page size. Values above 500 are capped at 500.
+      schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+    Cursor:
+      name: cursor
+      in: query
+      description: "`next_cursor` from the previous page. Must be used with the same `sort` and `dir`."
+      schema: { type: string }
+    Dir:
+      name: dir
+      in: query
+      description: "`desc` (newest first) or `asc`."
+      schema: { type: string, enum: [asc, desc], default: desc }
     Id:
       name: id
       in: path
@@ -756,6 +821,43 @@ components:
         category_id: { type: [integer, "null"] }
         expense_id: { type: [integer, "null"] }
         auto_assign: { type: boolean }
+
+    AccountPage:
+      type: object
+      required: [data, next_cursor]
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/Account" } }
+        next_cursor: { type: [string, "null"] }
+    CategoryPage:
+      type: object
+      required: [data, next_cursor]
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/Category" } }
+        next_cursor: { type: [string, "null"] }
+    ExpensePage:
+      type: object
+      required: [data, next_cursor]
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/Expense" } }
+        next_cursor: { type: [string, "null"] }
+    TransactionPage:
+      type: object
+      required: [data, next_cursor]
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/Transaction" } }
+        next_cursor: { type: [string, "null"] }
+    MerchantPage:
+      type: object
+      required: [data, next_cursor]
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/Merchant" } }
+        next_cursor: { type: [string, "null"] }
+    TransferPage:
+      type: object
+      required: [data, next_cursor]
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/Transfer" } }
+        next_cursor: { type: [string, "null"] }
 
     Transfer:
       type: object

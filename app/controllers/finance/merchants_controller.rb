@@ -1,5 +1,7 @@
 module Finance
   class MerchantsController < ResourceController
+    SORTS = %w[id key created_at updated_at].freeze
+
     private
 
     def model = Merchant

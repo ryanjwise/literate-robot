@@ -79,7 +79,7 @@ RSpec.describe "Finance merchant memory", type: :request do
     merchant = Finance::Merchant.first
 
     get "/finance/merchants", headers: headers
-    expect(json.first["key"]).to eq("WOOLWORTHS NEWTOWN")
+    expect(rows.first["key"]).to eq("WOOLWORTHS NEWTOWN")
 
     patch "/finance/merchants/#{merchant.id}", headers: headers, params: { merchant: { auto_assign: false } }
     expect(json["auto_assign"]).to be(false)

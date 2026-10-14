@@ -1,7 +1,13 @@
 module Finance
   class TransactionsController < ResourceController
+    SORTS = %w[date amount_cents created_at id].freeze
     TRANSFER_ERROR = "transfers are managed via /finance/transfers".freeze
     BANK_DELETE_ERROR = "bank records cannot be deleted; ignore them instead".freeze
+
+    # Newest first by date (then id). See FinancePagination for sort/dir/limit/cursor.
+    def index
+      render json: paginate_relation(scope, sorts: SORTS, default_sort: "date")
+    end
 
     # Manual entries are created directly; pulled records enter as "pulled"
     # and are reconciled via the member actions below.
@@ -59,7 +65,7 @@ module Finance
     end
 
     def transfer_candidates
-      render json: TransferLinker.candidates(record)
+      render json: { data: TransferLinker.candidates(record), next_cursor: nil }
     end
 
     private
@@ -67,12 +73,16 @@ module Finance
     def model = Transaction
 
     # Filters: status, account_id, category_id, expense_id, kind, from/to (dates),
-    # and q (case-insensitive text match on description, notes and merchant).
+    # min_amount_cents/max_amount_cents (by size), and q (case-insensitive text match
+    # on description, notes and merchant).
     def scope
       scoped = Transaction.all
       %i[status account_id category_id expense_id kind].each { scoped = scoped.where(_1 => params[_1]) if params[_1].present? }
       scoped = scoped.where(date: date_param(:from, nil)..) if params[:from].present?
       scoped = scoped.where(date: ..date_param(:to, nil)) if params[:to].present?
+      # Amount filters compare the size of the amount, so "over $50" works for both spending and income.
+      scoped = scoped.where("ABS(amount_cents) >= ?", int_param(:min_amount_cents)) if params[:min_amount_cents].present?
+      scoped = scoped.where("ABS(amount_cents) <= ?", int_param(:max_amount_cents)) if params[:max_amount_cents].present?
       if params[:q].present?
         like = "%#{Transaction.sanitize_sql_like(params[:q])}%"
         scoped = scoped.where("description LIKE :q ESCAPE '\\' OR notes LIKE :q ESCAPE '\\' OR merchant_key LIKE :q ESCAPE '\\'", q: like)

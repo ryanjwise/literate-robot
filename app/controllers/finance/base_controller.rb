@@ -1,7 +1,12 @@
 module Finance
   class BaseController < ApplicationController
     include ApiKeyAuthentication
+    include FinancePagination
     self.api_namespace = :finance
+
+    rescue_from FinancePagination::BadParam do |e|
+      render json: { error: e.message }, status: :bad_request
+    end
 
     rescue_from Date::Error do
       render json: { error: "invalid date" }, status: :bad_request

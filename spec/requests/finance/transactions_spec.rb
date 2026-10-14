@@ -71,9 +71,9 @@ RSpec.describe "Finance transactions", type: :request do
     Finance::Transaction.create!(source: "bank:abc", external_id: "b", account: other, date: "2026-10-02", amount_cents: -1,
                                  status: "matched", expense:)
     get "/finance/transactions", headers: headers, params: { status: "pulled" }
-    expect(json.map { _1["external_id"] }).to eq(["a"])
+    expect(rows.map { _1["external_id"] }).to eq(["a"])
     get "/finance/transactions", headers: headers, params: { account_id: other.id }
-    expect(json.map { _1["external_id"] }).to eq(["b"])
+    expect(rows.map { _1["external_id"] }).to eq(["b"])
   end
 
   it "refuses to create a transfer leg directly" do
@@ -96,7 +96,7 @@ RSpec.describe "Finance transaction search", type: :request do
 
   def ids(**params)
     get "/finance/transactions", headers: headers, params: params
-    json.map { _1["external_id"] }.sort
+    rows.map { _1["external_id"] }.sort
   end
 
   it "searches description, notes and merchant case-insensitively" do

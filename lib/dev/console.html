@@ -71,17 +71,30 @@ async function api(method, path, body) {
   return data;
 }
 
+// Every list endpoint returns {data, next_cursor}. Small lists (reference data, work queues) are fetched whole.
+async function apiList(path) {
+  const rows = [];
+  let cursor = null;
+  do {
+    const sep = path.includes("?") ? "&" : "?";
+    const page = await api("GET", `${path}${sep}limit=500${cursor ? "&cursor=" + encodeURIComponent(cursor) : ""}`);
+    rows.push(...page.data);
+    cursor = page.next_cursor;
+  } while (cursor);
+  return rows;
+}
+
 const dollars = (c) => (c / 100).toFixed(2);
 let accountNames = {};
 async function loadAccounts() {
-  const list = await api("GET", "/accounts");
+  const list = await apiList("/accounts");
   accountNames = Object.fromEntries(list.map((a) => [a.id, a.name]));
   return list;
 }
 const acct = (id) => accountNames[id] ?? id;
 let categoryNames = {}, expenseNames = {};
 async function loadLookups() {
-  const [cats, exps] = await Promise.all([api("GET", "/categories"), api("GET", "/expenses")]);
+  const [cats, exps] = await Promise.all([apiList("/categories"), apiList("/expenses")]);
   categoryNames = Object.fromEntries(cats.map((c) => [c.id, c.name]));
   expenseNames = Object.fromEntries(exps.map((e) => [e.id, e.name]));
   return { cats, exps };
@@ -98,7 +111,7 @@ async function accountSelect(name, list) {
 }
 
 async function expenseSelect(name) {
-  const expenses = await api("GET", "/expenses");
+  const expenses = await apiList("/expenses");
   return h("select", { name, required: true }, expenses.map((e) => h("option", { value: e.id }, e.name)));
 }
 
@@ -116,28 +129,47 @@ const txnHeads = ["Date", "Account", "Kind", "Source", "Description", "Amount", 
 const views = {
   async transactions() {
     await Promise.all([loadAccounts(), loadLookups()]);
-    const filter = h("select", {}, ["", "pulled", "matched", "confirmed", "ignored"].map((s) => h("option", { value: s }, s || "all")));
+    const opts = (pairs) => pairs.map(([v, t]) => h("option", { value: v }, t));
+    const filter = h("select", {}, opts([["", "all"], ["pulled", "pulled"], ["matched", "matched"], ["confirmed", "confirmed"], ["ignored", "ignored"]]));
     const q = h("input", { type: "search", placeholder: "search description / notes / merchant" });
     const from = h("input", { type: "date" }), to = h("input", { type: "date" });
+    const min = h("input", { type: "number", min: "0", step: "0.01", placeholder: "min $" });
+    const max = h("input", { type: "number", min: "0", step: "0.01", placeholder: "max $" });
+    const sort = h("select", {}, opts([["date", "date"], ["amount_cents", "amount"], ["created_at", "added"]]));
+    const dir = h("select", {}, opts([["desc", "newest / largest first"], ["asc", "oldest / smallest first"]]));
     const body = h("div");
-    const load = async () => {
-      const qs = new URLSearchParams();
-      for (const [k, el] of [["status", filter], ["q", q], ["from", from], ["to", to]]) if (el.value) qs.set(k, el.value);
-      const list = await api("GET", "/transactions" + (qs.size ? "?" + qs : ""));
+    let rows = [], cursor = null;
+    const render = () => {
       // Bank records and transfer legs cannot be deleted here; the API refuses.
-      body.replaceChildren(table(txnHeads.concat(""), txnRows(list, (t) => t.source !== "MAN" || t.kind === "transfer" ? "" :
-        h("button", { onclick: async () => { if (confirm("Delete?")) { await run(() => api("DELETE", "/transactions/" + t.id)); load(); } } }, "delete"))));
+      const del = (t) => t.source !== "MAN" || t.kind === "transfer" ? "" :
+        h("button", { onclick: async () => { if (confirm("Delete?")) { await run(() => api("DELETE", "/transactions/" + t.id)); fetchPage(true); } } }, "delete");
+      body.replaceChildren(table(txnHeads.concat(""), txnRows(rows, del)),
+        h("p", {}, `${rows.length} shown`, cursor ? h("button", { style: "margin-left:.5rem", onclick: () => run(() => fetchPage(false)) }, "load more") : " (all)"));
     };
-    for (const el of [filter, q, from, to]) el.addEventListener("change", () => run(load));
-    await load();
-    return [h("div", { style: "display:flex;gap:.5rem;flex-wrap:wrap" }, field("Status", filter), field("Search", q), field("From", from), field("To", to)), body];
+    const fetchPage = async (reset) => {
+      if (reset) { rows = []; cursor = null; }
+      const qs = new URLSearchParams({ limit: "100", sort: sort.value, dir: dir.value });
+      for (const [k, el] of [["status", filter], ["q", q], ["from", from], ["to", to]]) if (el.value) qs.set(k, el.value);
+      if (min.value) qs.set("min_amount_cents", toCents(min.value));
+      if (max.value) qs.set("max_amount_cents", toCents(max.value));
+      if (cursor) qs.set("cursor", cursor);
+      const page = await api("GET", "/transactions?" + qs);
+      rows = rows.concat(page.data);
+      cursor = page.next_cursor;
+      render();
+    };
+    for (const el of [filter, q, from, to, min, max, sort, dir]) el.addEventListener("change", () => run(() => fetchPage(true)));
+    await fetchPage(true);
+    return [h("div", { style: "display:flex;gap:.5rem;flex-wrap:wrap" },
+      field("Status", filter), field("Search", q), field("From", from), field("To", to),
+      field("Min $", min), field("Max $", max), field("Sort by", sort), field("Order", dir)), body];
   },
 
   async reconcile() {
     await loadAccounts();
     const { cats, exps } = await loadLookups();
-    const list = await api("GET", "/transactions?status=pulled");
-    const matched = await api("GET", "/transactions?status=matched");
+    const list = await apiList("/transactions?status=pulled");
+    const matched = await apiList("/transactions?status=matched");
     const reload = () => show("reconcile");
     const post = (t, action, body) => run(async () => {
       const res = await api("POST", `/transactions/${t.id}/${action}`, body);
@@ -169,7 +201,7 @@ const views = {
 
   async merchants() {
     const { cats, exps } = await loadLookups();
-    const list = await api("GET", "/merchants");
+    const list = await apiList("/merchants");
     const toggle = (m) => h("input", { type: "checkbox", checked: m.auto_assign, onchange: (e) =>
       run(() => api("PATCH", "/merchants/" + m.id, { merchant: { auto_assign: e.target.checked } })) });
     const del = (m) => h("button", { onclick: () => run(async () => { await api("DELETE", "/merchants/" + m.id); show("merchants"); }) }, "forget");
@@ -285,7 +317,7 @@ const views = {
 
   async add() {
     const accounts = await loadAccounts();
-    const exps = await api("GET", "/expenses");
+    const exps = await apiList("/expenses");
     const f = h("form", { onsubmit: (e) => { e.preventDefault(); run(async () => {
       const d = new FormData(f);
       const kind = d.get("kind"), cents = toCents(d.get("amount"));
@@ -305,7 +337,7 @@ const views = {
       field("Notes", h("textarea", { name: "notes" })),
       h("button", { type: "submit" }, "Add manual transaction"));
 
-    const transfers = await api("GET", "/transfers");
+    const transfers = await apiList("/transfers");
     const t = h("form", { onsubmit: (e) => { e.preventDefault(); run(async () => {
       const d = new FormData(t);
       await api("POST", "/transfers", { transfer: {
@@ -370,7 +402,7 @@ const views = {
 async function transferView(id) {
   const [accounts] = [await loadAccounts(), await loadLookups()];
   const t = await api("GET", "/transactions/" + id);
-  const candidates = await api("GET", `/transactions/${id}/transfer_candidates`);
+  const candidates = await apiList(`/transactions/${id}/transfer_candidates`);
   const done = () => { say("Linked as a transfer."); show("reconcile"); };
   const linkBtn = (c) => h("button", { onclick: () => run(async () => { await api("POST", `/transactions/${id}/link_transfer`, { counterpart_id: c.id }); done(); }) }, "link");
   const sel = h("select", {}, accounts.filter((a) => a.id !== t.account_id).map((a) => h("option", { value: a.id }, a.name)));
@@ -442,7 +474,7 @@ async function detail(id) {
     xferAction = h("button", { onclick: () => show("transfer:" + id) }, "make transfer…");
   } else {
     // A transfer with a bank leg can be unlinked (a fully manual one is deleted from the add tab).
-    const group = (await api("GET", "/transfers")).find((x) => x.transfer_group_id === t.transfer_group_id);
+    const group = (await apiList("/transfers")).find((x) => x.transfer_group_id === t.transfer_group_id);
     if (group && group.paired && !group.deletable) {
       xferAction = h("button", { onclick: () => run(async () => {
         await api("POST", `/transfers/${t.transfer_group_id}/unlink`); say("Unlinked."); show("detail:" + id); }) }, "unlink transfer");

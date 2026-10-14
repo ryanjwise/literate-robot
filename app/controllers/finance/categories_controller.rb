@@ -1,5 +1,7 @@
 module Finance
   class CategoriesController < ResourceController
+    SORTS = %w[id name created_at].freeze
+
     private
 
     def model = Category

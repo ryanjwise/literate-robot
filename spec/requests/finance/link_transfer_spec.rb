@@ -40,13 +40,13 @@ RSpec.describe "Finance cross-bank transfers", type: :request do
       expect(up.reload.balance_cents).to eq(before)
 
       get "/finance/transactions", headers: headers, params: { status: "pulled" }
-      expect(json).to be_empty
+      expect(rows).to be_empty
     end
 
     it "shows up in the transfers list as a paired transfer that cannot be deleted" do
       link(up_leg, counterpart_id: manual_leg.id)
       get "/finance/transfers", headers: headers
-      expect(json.first).to include("from_account_id" => up.id, "to_account_id" => other_bank.id, "paired" => true,
+      expect(rows.first).to include("from_account_id" => up.id, "to_account_id" => other_bank.id, "paired" => true,
                                     "deletable" => false, "amount_cents" => 30_000)
       delete "/finance/transfers/#{up_leg.reload.transfer_group_id}", headers: headers
       expect(response).to have_http_status(:unprocessable_content)
@@ -113,7 +113,7 @@ RSpec.describe "Finance cross-bank transfers", type: :request do
       far = Finance::Transaction.create!(source: "MAN", account: other_bank, kind: "income", date: "2026-09-01",
                                          amount_cents: 30_000, status: "confirmed")
       get "/finance/transactions/#{up_leg.id}/transfer_candidates", headers: headers
-      expect(json.map { _1["id"] }).to eq([manual_leg.id, far.id])
+      expect(rows.map { _1["id"] }).to eq([manual_leg.id, far.id])
     end
   end
 

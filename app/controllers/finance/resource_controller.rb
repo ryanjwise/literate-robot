@@ -1,8 +1,9 @@
 module Finance
   # Plain JSON CRUD. Subclasses define `model` and `permitted`.
   class ResourceController < BaseController
+    # Newest first by default; `sort`, `dir`, `limit` and `cursor` per FinancePagination.
     def index
-      render json: scope.order(:id)
+      render json: paginate_relation(scope, sorts: self.class::SORTS)
     end
 
     def show

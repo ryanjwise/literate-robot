@@ -32,6 +32,12 @@ Roll a key: create the new one, move clients over, revoke the old one.
 - Transactions are unique on `(source, external_id)`; manual entries use source `MAN` with a generated id.
 - Amounts are integer `amount_cents`. States and frequencies are enforced by DB CHECK constraints.
 
+## Pagination
+Every list endpoint returns `{"data": [...], "next_cursor": "..." | null}`, newest first. Pass `next_cursor` back as
+`cursor` for the next page. `limit` (default 100, max 500), `sort` (per-endpoint columns), `dir` (`desc`|`asc`).
+Cursors are keyset-based (stable while records change) and only valid for the `sort`/`dir` they were issued for.
+Transaction filters add `min_amount_cents`/`max_amount_cents` (by size); transfers filter by `from`, `to`, `round_up`, `paired`.
+
 ## Merchant memory
 Each transaction gets a `merchant_key` (normalized description). Reconciling an expense-kind record saves a
 `merchants` rule (key -> category and/or expense) and pre-matches every other waiting record from that merchant
@@ -45,7 +51,7 @@ confirms all untouched auto-matched records. Rules are managed at `/finance/merc
   expenses with no anchor. It does not check whether a bill was already paid early.
 - `GET /finance/transfers/needed?to=&include_forecast=true` returns the transfers that cover each account along
   the `funded_by` chain: `max(0, -(balance + upcoming bills - what it sends on))`. The top of a chain reports a shortfall.
-- `GET /finance/transactions` filters: `status`, `account_id`, `category_id`, `expense_id`, `kind`, `from`, `to`, `q`.
+- `GET /finance/transactions` filters: `status`, `account_id`, `category_id`, `expense_id`, `kind`, `from`, `to`, `q`, `min_amount_cents`, `max_amount_cents`.
 
 ## UP bank pull
 `POST /finance/pull/up` with headers `Authorization: Bearer <our key>` and `X-Bank-Token: <UP personal access token>`;

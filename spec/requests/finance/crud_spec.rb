@@ -10,13 +10,13 @@ RSpec.describe "Finance CRUD", type: :request do
   it "lists and reads accounts" do
     account
     get "/finance/accounts", headers: headers
-    expect(json.first).to include("name" => "Everyday", "balance_cents" => 0)
+    expect(rows.first).to include("name" => "Everyday", "balance_cents" => 0)
   end
 
   it "lists, reads and updates categories" do
     category
     get "/finance/categories", headers: headers
-    expect(json.map { _1["name"] }).to eq(["Utilities"])
+    expect(rows.map { _1["name"] }).to eq(["Utilities"])
     get "/finance/categories/#{category.id}", headers: headers
     expect(json["desired_account_id"]).to eq(account.id)
     patch "/finance/categories/#{category.id}", headers: headers, params: { category: { name: "Bills" } }
@@ -26,7 +26,7 @@ RSpec.describe "Finance CRUD", type: :request do
   it "lists, reads, updates and deletes expenses" do
     expense
     get "/finance/expenses", headers: headers
-    expect(json.first).to include("name" => "Power", "amount_mode" => "variable")
+    expect(rows.first).to include("name" => "Power", "amount_mode" => "variable")
     get "/finance/expenses/#{expense.id}", headers: headers
     expect(json["anchor_date"]).to eq("2026-11-01")
     patch "/finance/expenses/#{expense.id}", headers: headers, params: { expense: { frequency: "quarterly" } }

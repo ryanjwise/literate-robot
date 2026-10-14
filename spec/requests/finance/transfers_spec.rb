@@ -27,8 +27,8 @@ RSpec.describe "Finance transfers", type: :request do
   it "lists transfers as single records" do
     transfer!
     get "/finance/transfers", headers: headers
-    expect(json.size).to eq(1)
-    expect(json.first).to include("from_account_id" => debit.id, "to_account_id" => card.id, "amount_cents" => 30_000,
+    expect(rows.size).to eq(1)
+    expect(rows.first).to include("from_account_id" => debit.id, "to_account_id" => card.id, "amount_cents" => 30_000,
                                   "paired" => true, "deletable" => true)
   end
 
@@ -82,7 +82,7 @@ RSpec.describe "Finance transfers from a bank pull", type: :request do
 
     get "/finance/transfers", headers: headers
     expect(response).to have_http_status(:ok)
-    by_group = json.index_by { _1["transfer_group_id"] }
+    by_group = rows.index_by { _1["transfer_group_id"] }
     expect(by_group["up-lone"]).to include("from_account_id" => account.id, "to_account_id" => nil,
                                            "amount_cents" => 20_000, "paired" => false, "deletable" => false)
     expect(by_group["up-lone-in"]).to include("from_account_id" => nil, "to_account_id" => account.id, "paired" => false)
@@ -93,7 +93,7 @@ RSpec.describe "Finance transfers from a bank pull", type: :request do
                                  status: "confirmed", date: "2026-10-11", amount_cents: 7, description: "Round Up")
     bank_leg("o", -20_000, "up-other")
     get "/finance/transfers", headers: headers
-    flags = json.to_h { [_1["transfer_group_id"], _1["round_up"]] }
+    flags = rows.to_h { [_1["transfer_group_id"], _1["round_up"]] }
     expect(flags).to eq("up-r" => true, "up-other" => false)
   end
 
