@@ -15,7 +15,13 @@ Currently: `/finance` (expense tracking: manual entry now, bank pulls + reconcil
 Roll a key: create the new one, move clients over, revoke the old one.
 
 ## Finance API (`Authorization: Bearer <key>`)
-- `expense_categories`, `expenses`, `transactions`: standard JSON CRUD under `/finance`
+- `accounts`, `expense_categories`, `expenses`, `transactions`: standard JSON CRUD under `/finance`
+- Accounts have a `kind` (`debit`/`credit`/`cash`), an optional `funded_by_id` (the account that pays a card) and an
+  opening balance; `balance_cents` is computed (opening + transactions on/after the opening date). Credit accounts go negative.
+- `amount_cents` is signed from the account's view: negative = money out, positive = money in. Transaction `kind`
+  is `expense`, `income` (must be positive) or `transfer`.
+- `/finance/transfers` (`index`, `create`, `destroy` by group id) manages transfers as two linked legs that net to zero.
+  Transfer legs cannot be created, deleted or reshaped through `/finance/transactions` (only description/notes).
 - `POST /finance/transactions/:id/reconcile` (`expense_id`) -> status `matched`
 - `POST /finance/transactions/:id/confirm` -> status `confirmed`
 - `GET /finance/transactions?status=pulled` lists unreconciled records

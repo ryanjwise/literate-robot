@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_14_000002) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_14_000003) do
   create_table "api_keys", force: :cascade do |t|
     t.string "namespace", null: false
     t.string "name", null: false
@@ -20,6 +20,19 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_14_000002) do
     t.datetime "updated_at", null: false
     t.index ["digest"], name: "index_api_keys_on_digest", unique: true
     t.index ["namespace"], name: "index_api_keys_on_namespace"
+  end
+
+  create_table "finance_accounts", force: :cascade do |t|
+    t.string "name", null: false
+    t.string "kind", null: false
+    t.integer "funded_by_id"
+    t.integer "opening_balance_cents", default: 0, null: false
+    t.date "opening_balance_on"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["funded_by_id"], name: "index_finance_accounts_on_funded_by_id"
+    t.index ["name"], name: "index_finance_accounts_on_name", unique: true
+    t.check_constraint "kind IN ('debit','credit','cash')", name: "finance_accounts_kind_check"
   end
 
   create_table "finance_expense_categories", force: :cascade do |t|
@@ -51,13 +64,22 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_14_000002) do
     t.integer "expense_id"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.integer "account_id", null: false
+    t.string "kind", default: "expense", null: false
+    t.string "transfer_group_id"
+    t.index ["account_id"], name: "index_finance_transactions_on_account_id"
     t.index ["expense_id"], name: "index_finance_transactions_on_expense_id"
     t.index ["source", "external_id"], name: "index_finance_transactions_on_source_and_external_id", unique: true
     t.index ["status"], name: "index_finance_transactions_on_status"
-    t.check_constraint "status = 'pulled' OR expense_id IS NOT NULL", name: "finance_transactions_reconciled_has_expense_check"
+    t.check_constraint "(kind = 'transfer') = (transfer_group_id IS NOT NULL)", name: "finance_transactions_transfer_group_check"
+    t.check_constraint "amount_cents <> 0", name: "finance_transactions_amount_nonzero_check"
+    t.check_constraint "kind IN ('expense','income','transfer')", name: "finance_transactions_kind_check"
+    t.check_constraint "status = 'pulled' OR expense_id IS NOT NULL OR kind <> 'expense'", name: "finance_transactions_reconciled_has_expense_check"
     t.check_constraint "status IN ('pulled','matched','confirmed')", name: "finance_transactions_status_check"
   end
 
+  add_foreign_key "finance_accounts", "finance_accounts", column: "funded_by_id"
   add_foreign_key "finance_expenses", "finance_expense_categories", column: "expense_category_id"
+  add_foreign_key "finance_transactions", "finance_accounts", column: "account_id"
   add_foreign_key "finance_transactions", "finance_expenses", column: "expense_id"
 end

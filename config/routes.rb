@@ -5,6 +5,8 @@ Rails.application.routes.draw do
   root "dev/console#show" unless Rails.env.production?
 
   namespace :finance do
+    resources :accounts
+    resources :transfers, only: %i[index create destroy]
     resources :expense_categories
     resources :expenses
     resources :transactions do
