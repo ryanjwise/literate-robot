@@ -49,6 +49,19 @@ module Finance
       render json: record
     end
 
+    # Make this the half of a transfer: pair it with `counterpart_id`, or create the
+    # missing manual half on `counterpart_account_id`.
+    def link_transfer
+      legs = TransferLinker.link!(record, counterpart_id: params[:counterpart_id], counterpart_account_id: params[:counterpart_account_id])
+      render json: legs
+    rescue TransferLinker::Error => e
+      render_error(e.message)
+    end
+
+    def transfer_candidates
+      render json: TransferLinker.candidates(record)
+    end
+
     private
 
     def model = Transaction

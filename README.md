@@ -60,6 +60,18 @@ is never stored or logged; errors from UP come back as 502 (429 if rate limited)
 - UP's category is kept in `bank_category` as a hint only; new bank records still go through merchant memory.
 - To link a manual account to an UP account instead of creating a new one, set its `external_source` (`bank:up`) and `external_id`.
 
+## Transfers across banks
+For a transfer where only one half is a bank record (e.g. UP -> another bank, with the other side typed in by hand):
+- `POST /finance/transactions/:id/link_transfer` with `counterpart_id` (pair with an existing transaction: other account,
+  equal and opposite amount) **or** `counterpart_account_id` (create the missing manual half, same date, opposite amount).
+  Both legs become one confirmed transfer, keep their own source, and leave the reconcile queue. A bank leg's amount and date
+  never change; only its kind does, and only through this action. A later pull does not undo the link.
+- `GET /finance/transactions/:id/transfer_candidates` lists likely counterparts, nearest date first.
+- `POST /finance/transfers/:group/unlink` returns both legs to income/expense in the queue (only for transfers with a bank leg).
+  A manual half created by linking is not deleted; delete it yourself if it should not exist.
+- Do not record an UP-to-other-bank transfer with the manual transfer form: it would add a second out-leg on the UP account
+  and its balance would drift.
+
 ## Dev helpers
 - `bin/rails dev:sample_data` adds sample pulled records (source `bank:sample`) to try the reconcile UI; safe to re-run.
 - `bin/rails dev:clear_sample_data` removes them.

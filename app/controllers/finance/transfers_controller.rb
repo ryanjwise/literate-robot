@@ -21,6 +21,12 @@ module Finance
       render json: planner
     end
 
+    def unlink
+      render json: TransferLinker.unlink!(params[:id])
+    rescue TransferLinker::Error => e
+      render json: { error: e.message }, status: :unprocessable_content
+    end
+
     def destroy
       Transfer.destroy_group!(params[:id])
       head :no_content

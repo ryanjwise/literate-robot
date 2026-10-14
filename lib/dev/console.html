@@ -146,12 +146,13 @@ const views = {
     });
     const autoCount = matched.filter((t) => t.auto_assigned).length;
     const pick = (t) => {
-      if (t.kind !== "expense") return h("span", {}, h("button", { onclick: () => post(t, "confirm") }, "confirm"), h("button", { onclick: () => post(t, "ignore") }, "ignore"));
+      const xfer = h("button", { title: "This is one half of a transfer between accounts", onclick: () => show("transfer:" + t.id) }, "transfer…");
+      if (t.kind !== "expense") return h("span", {}, h("button", { onclick: () => post(t, "confirm") }, "confirm"), h("button", { onclick: () => post(t, "ignore") }, "ignore"), xfer);
       const cat = h("select", {}, optionList(cats, "(category)"));
       const exp = h("select", {}, optionList(exps, "(recurring expense)"));
       return h("span", {}, cat, exp,
         h("button", { onclick: () => post(t, "reconcile", { category_id: cat.value, expense_id: exp.value }) }, "match"),
-        h("button", { onclick: () => post(t, "ignore") }, "ignore"));
+        h("button", { onclick: () => post(t, "ignore") }, "ignore"), xfer);
     };
     const confirmBtn = (t) => h("button", { onclick: () => post(t, "confirm") }, "confirm");
     return [
@@ -317,6 +318,7 @@ const views = {
       field("Amount ($)", h("input", { name: "amount", type: "number", step: "0.01", min: "0.01", required: true })),
       field("Description", h("input", { name: "description" })),
       h("button", { type: "submit" }, "Add transfer"));
+    const unlinkBtn = (x) => h("button", { onclick: () => run(async () => { await api("POST", `/transfers/${x.transfer_group_id}/unlink`); show("add"); }) }, "unlink");
     const delBtn = (x) => h("button", { onclick: () => run(async () => { await api("DELETE", "/transfers/" + x.transfer_group_id); show("add"); }) }, "delete");
     return [
       h("h2", {}, "Manual entry"), f,
@@ -324,7 +326,7 @@ const views = {
       table(["Date", "From", "To", "Amount", "Description", ""], transfers.map((x) => h("tr", {},
         h("td", {}, x.date), h("td", {}, x.from_account_id ? acct(x.from_account_id) : "(outside)"), h("td", {}, x.to_account_id ? acct(x.to_account_id) : "(outside)"),
         h("td", { class: "num" }, dollars(x.amount_cents)), h("td", {}, x.description || ""),
-        h("td", {}, x.deletable ? delBtn(x) : "bank record")))),
+        h("td", {}, x.deletable ? delBtn(x) : x.paired ? unlinkBtn(x) : "bank record")))),
     ];
   },
 
@@ -363,6 +365,31 @@ const views = {
   },
 };
 
+
+// Make a transaction one half of a transfer: link an existing counterpart, or create the other half.
+async function transferView(id) {
+  const [accounts] = [await loadAccounts(), await loadLookups()];
+  const t = await api("GET", "/transactions/" + id);
+  const candidates = await api("GET", `/transactions/${id}/transfer_candidates`);
+  const done = () => { say("Linked as a transfer."); show("reconcile"); };
+  const linkBtn = (c) => h("button", { onclick: () => run(async () => { await api("POST", `/transactions/${id}/link_transfer`, { counterpart_id: c.id }); done(); }) }, "link");
+  const sel = h("select", {}, accounts.filter((a) => a.id !== t.account_id).map((a) => h("option", { value: a.id }, a.name)));
+  return [
+    h("button", { onclick: () => show("reconcile") }, "← back"),
+    h("h2", {}, "Make this a transfer"),
+    h("p", {}, `${t.date} · ${acct(t.account_id)} · ${t.description || ""} · ${dollars(t.amount_cents)}`),
+    h("h2", {}, "Link to a transaction you already have"),
+    candidates.length
+      ? table(["Date", "Account", "Description", "Amount", "Source", ""], candidates.map((c) => h("tr", {},
+          h("td", {}, c.date), h("td", {}, acct(c.account_id)), h("td", {}, c.description || ""),
+          h("td", { class: "num" }, dollars(c.amount_cents)), h("td", {}, c.source), h("td", {}, linkBtn(c)))))
+      : h("p", {}, "No transaction on another account has the opposite amount."),
+    h("h2", {}, "…or create the other half"),
+    h("p", {}, `Adds a manual ${dollars(-t.amount_cents)} entry dated ${t.date} on:`),
+    h("div", { style: "display:flex;gap:.5rem" }, sel,
+      h("button", { onclick: () => run(async () => { await api("POST", `/transactions/${id}/link_transfer`, { counterpart_account_id: sel.value }); done(); }) }, "create & link")),
+  ];
+}
 
 // Single-transaction view: every stored field, plus an edit form limited to
 // what the API allows (review fields only for bank records, nearly all for manual).
@@ -410,8 +437,19 @@ async function detail(id) {
   const note = transfer ? "Transfer leg: only description and notes can change here."
     : manual ? "Manual record: everything except source and external id can be edited."
     : "Bank record: only notes, category, expense and status can be edited.";
+  let xferAction = "";
+  if (!transfer) {
+    xferAction = h("button", { onclick: () => show("transfer:" + id) }, "make transfer…");
+  } else {
+    // A transfer with a bank leg can be unlinked (a fully manual one is deleted from the add tab).
+    const group = (await api("GET", "/transfers")).find((x) => x.transfer_group_id === t.transfer_group_id);
+    if (group && group.paired && !group.deletable) {
+      xferAction = h("button", { onclick: () => run(async () => {
+        await api("POST", `/transfers/${t.transfer_group_id}/unlink`); say("Unlinked."); show("detail:" + id); }) }, "unlink transfer");
+    }
+  }
   return [
-    h("button", { onclick: () => show("transactions") }, "← back"),
+    h("button", { onclick: () => show("transactions") }, "← back"), " ", xferAction,
     h("h2", {}, `Transaction ${t.id}`), h("p", {}, note),
     table(["Field", "Value", "Resolved", ""], rows),
     h("h2", {}, "Edit"), f,
@@ -428,7 +466,9 @@ async function show(name) {
     h("button", { "aria-current": String(k === name), onclick: () => show(k) }, k)));
   $("view").replaceChildren();
   await run(async () => {
-    const out = name.startsWith("detail:") ? await detail(name.slice(7)) : await views[name]();
+    const out = name.startsWith("detail:") ? await detail(name.slice(7))
+      : name.startsWith("transfer:") ? await transferView(name.slice(9))
+      : await views[name]();
     $("view").replaceChildren(...out);
   });
 }

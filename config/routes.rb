@@ -8,6 +8,7 @@ Rails.application.routes.draw do
     resources :accounts
     resources :transfers, only: %i[index create destroy] do
       get :needed, on: :collection
+      post :unlink, on: :member
     end
     get :forecast, to: "forecasts#show"
     post "pull/up", to: "pulls#up"
@@ -20,6 +21,8 @@ Rails.application.routes.draw do
         post :reconcile
         post :confirm
         post :ignore
+        post :link_transfer
+        get :transfer_candidates
       end
     end
   end
