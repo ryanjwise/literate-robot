@@ -9,7 +9,7 @@ module Finance
       since = date_param(:since, 30.days.ago.to_date)
       return render json: { error: "since cannot be in the future" }, status: :unprocessable_content if since > Date.current
 
-      pull = Up::Pull.new(client: Up::Client.new(token), since:, dry_run: params[:dry_run] == "true")
+      pull = Up::Pull.new(client: Up::Client.new(token), since:, dry_run: ActiveModel::Type::Boolean.new.cast(params[:dry_run]) || false)
       render json: pull.call
     rescue Up::Error => e
       # 502 (not 401) so clients can tell "UP said no" from "our key is wrong".

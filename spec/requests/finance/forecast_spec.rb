@@ -86,3 +86,24 @@ RSpec.describe "Finance forecast and transfers needed", type: :request do
     expect(response).to have_http_status(:unprocessable_content)
   end
 end
+
+RSpec.describe "Finance transfers/needed boolean parsing", type: :request do
+  before { travel_to Date.new(2026, 10, 14) }
+
+  it "accepts include_forecast as a string or boolean and defaults to true" do
+    headers = auth_headers
+    saver = make_account(name: "S", opening_balance_cents: 100_000)
+    card = make_account(name: "C", kind: "credit", funded_by: saver)
+    cat = Finance::Category.create!(name: "B")
+    Finance::Expense.create!(name: "Bill", frequency: "monthly", category: cat, account: card, amount_mode: "fixed",
+                             expected_amount_cents: 5_000, anchor_date: "2026-10-20")
+
+    [["false", 0], [false, 0], ["true", 5_000], [nil, 5_000]].each do |value, expected|
+      params = { to: "2026-10-31" }
+      params[:include_forecast] = value unless value.nil?
+      get "/finance/transfers/needed", headers: headers, params: params
+      sent = json["transfers"].sum { _1["amount_cents"] }
+      expect(sent).to eq(expected), "include_forecast=#{value.inspect}: expected #{expected}, got #{sent}"
+    end
+  end
+end

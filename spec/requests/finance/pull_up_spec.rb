@@ -117,6 +117,14 @@ RSpec.describe "Finance UP pull", type: :request do
     expect(Finance::Account.count).to eq(0)
   end
 
+  it "honours dry_run sent as a JSON boolean, as clients do" do
+    post "/finance/pull/up", headers: headers.merge("Content-Type" => "application/json"),
+         params: { since: "2026-10-01", dry_run: true }.to_json
+    expect(json["dry_run"]).to be(true)
+    expect(Finance::Transaction.count).to eq(0)
+    expect(Finance::Account.count).to eq(0)
+  end
+
   it "defaults to the last 30 days, and rejects a future date" do
     pull
     expect(json["since"]).to eq("2026-09-14")

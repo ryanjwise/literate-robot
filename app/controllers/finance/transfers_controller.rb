@@ -16,7 +16,7 @@ module Finance
     # GET /finance/transfers/needed?to=YYYY-MM-DD&include_forecast=true
     def needed
       planner = TransferPlanner.new(to: date_param(:to, 30.days.from_now.to_date),
-                                    include_forecast: params[:include_forecast] != "false")
+                                    include_forecast: ActiveModel::Type::Boolean.new.cast(params.fetch(:include_forecast, true)))
       return render json: { error: "range must be at most #{Forecast::MAX_DAYS} days" }, status: :unprocessable_content unless planner.valid?
       render json: planner
     end
