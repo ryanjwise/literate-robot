@@ -1,0 +1,877 @@
+openapi: 3.1.0
+info:
+  title: literate-robot / finance
+  version: 0.1.0
+  license: { name: Proprietary, identifier: LicenseRef-Proprietary }
+  description: |
+    Personal finance API: accounts, categorised transactions, recurring expenses, a bill forecast, and
+    transfer planning, with an UP Bank importer.
+
+    This file describes the API **as it behaves today**. Known gaps that will change response shapes
+    (list pagination, uniform error bodies) are listed at the end of this description.
+
+    ## Conventions
+    - **Auth.** Every route needs `Authorization: Bearer <key>`, a key issued for the `finance` namespace
+      (`bin/rails "keys:create[finance,name]"`). A missing, wrong, revoked, or wrong-namespace key gets `401` with an
+      empty body. Several keys can be active at once so keys can be rolled.
+    - **Money** is an integer number of cents, signed from the account's point of view: negative = money out,
+      positive = money in. Credit accounts therefore have negative balances while money is owed.
+      `expected_amount_cents` on an expense is the one exception: a positive cost.
+    - **Dates** are `YYYY-MM-DD`, in the local calendar of the bank that reported them. Timestamps are ISO 8601 UTC.
+    - **Request bodies** are JSON, wrapped in the resource name: `{"account": {...}}`, `{"transaction": {...}}`,
+      `{"transfer": {...}}`. Action endpoints (reconcile, link_transfer, pull) take top-level fields instead.
+    - **IDs** are integers, except `transfer_group_id` (a string) and bank `external_id`s (strings).
+    - **Identity of a transaction** is `(source, external_id)`, unique. Manual entries use source `MAN`; bank sources look
+      like `bank:up`.
+    - **Bank credentials** are never stored. The UP token is sent per request in `X-Bank-Token` and used for that
+      request only.
+
+    ## Lifecycle of a transaction
+    `pulled` (new, unreviewed) → `matched` (has a category, awaiting confirmation) → `confirmed`; or `ignored`.
+    An `expense` needs a category before it can be `matched` or `confirmed`; `income` and `transfer` do not.
+    Merchant memory pre-matches records from merchants you have reconciled before (`auto_assigned: true`).
+
+    ## Bank-origin vs manual records
+    - Records whose `source` is not `MAN` came from a bank. Only `notes`, `category_id`, `expense_id` and `status`
+      can be changed, and they cannot be deleted (ignore them instead).
+    - Manual records can be changed freely except `source` and `external_id`.
+    - Transfer legs can only change `description` and `notes`; create and delete transfers via `/finance/transfers`
+      (or `link_transfer` / `unlink` when one half is a bank record).
+
+    ## Known gaps (will change shapes)
+    - List endpoints return every row as a plain array, with no pagination.
+    - Error bodies are not uniform: a `422` is either `{"errors": {field: [messages]}}` or `{"error": "message"}`
+      (see the `Unprocessable` response), and `401`/`404` often have no body.
+servers:
+  - url: http://localhost:3000
+    description: Local development
+security:
+  - bearerAuth: []
+tags:
+  - { name: Accounts, description: "Where money lives; balances are computed." }
+  - { name: Categories, description: "What spending is for." }
+  - { name: Expenses, description: "Recurring or ad hoc bills, used for forecasting." }
+  - { name: Transactions, description: "Money movements, manual or from a bank." }
+  - { name: Reconciliation, description: "Reviewing pulled records." }
+  - { name: Merchants, description: "Remembered category choices per merchant." }
+  - { name: Transfers, description: "Movements between your own accounts." }
+  - { name: Planning, description: "Forecast and transfers needed." }
+  - { name: Bank pull, description: "Importing from a bank." }
+
+paths:
+  /finance/accounts:
+    get:
+      tags: [Accounts]
+      operationId: listAccounts
+      summary: List accounts, each with its computed balance
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Account" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Accounts]
+      operationId: createAccount
+      summary: Create an account
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [account], properties: { account: { $ref: "#/components/schemas/AccountInput" } } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Account" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /finance/accounts/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      tags: [Accounts]
+      operationId: getAccount
+      summary: Get an account with its balance
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Account" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Accounts]
+      operationId: updateAccount
+      summary: Update an account
+      description: Also available as `PUT`.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [account], properties: { account: { $ref: "#/components/schemas/AccountInput" } } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Account" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+    delete:
+      tags: [Accounts]
+      operationId: deleteAccount
+      summary: Delete an account
+      description: Refused (`422`) while transactions, expenses, categories, or funded accounts still reference it.
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /finance/categories:
+    get:
+      tags: [Categories]
+      operationId: listCategories
+      summary: List categories
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Category" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Categories]
+      operationId: createCategory
+      summary: Create a category
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [category], properties: { category: { $ref: "#/components/schemas/CategoryInput" } } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Category" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /finance/categories/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      tags: [Categories]
+      operationId: getCategory
+      summary: Get a category
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Category" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Categories]
+      operationId: updateCategory
+      summary: Update a category
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [category], properties: { category: { $ref: "#/components/schemas/CategoryInput" } } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Category" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+    delete:
+      tags: [Categories]
+      operationId: deleteCategory
+      summary: Delete a category
+      description: Refused (`422`) while expenses or transactions use the category.
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /finance/expenses:
+    get:
+      tags: [Expenses]
+      operationId: listExpenses
+      summary: List recurring (or ad hoc) expenses
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Expense" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Expenses]
+      operationId: createExpense
+      summary: Create an expense
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [expense], properties: { expense: { $ref: "#/components/schemas/ExpenseInput" } } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Expense" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /finance/expenses/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      tags: [Expenses]
+      operationId: getExpense
+      summary: Get an expense
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Expense" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Expenses]
+      operationId: updateExpense
+      summary: Update an expense
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [expense], properties: { expense: { $ref: "#/components/schemas/ExpenseInput" } } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Expense" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+    delete:
+      tags: [Expenses]
+      operationId: deleteExpense
+      summary: Delete an expense
+      description: Refused (`422`) while transactions reference the expense.
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /finance/transactions:
+    get:
+      tags: [Transactions]
+      operationId: listTransactions
+      summary: List and search transactions
+      description: Filters combine with AND. Not paginated yet; ordered by id.
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/TransactionStatus" } }
+        - { name: kind, in: query, schema: { $ref: "#/components/schemas/TransactionKind" } }
+        - { name: account_id, in: query, schema: { type: integer } }
+        - { name: category_id, in: query, schema: { type: integer } }
+        - { name: expense_id, in: query, schema: { type: integer } }
+        - { name: from, in: query, description: "Earliest date, inclusive.", schema: { type: string, format: date } }
+        - { name: to, in: query, description: "Latest date, inclusive.", schema: { type: string, format: date } }
+        - name: q
+          in: query
+          description: Case-insensitive text match on description, notes, and merchant key. `%` and `_` are literal.
+          schema: { type: string }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Transaction" } } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Transactions]
+      operationId: createTransaction
+      summary: Create a transaction
+      description: |
+        Normally used for manual entries (`source: "MAN"`; `external_id` is generated). Bank importers also create records
+        here with their own source and `external_id`. `kind: transfer` is refused; use `/finance/transfers`.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [transaction], properties: { transaction: { $ref: "#/components/schemas/TransactionInput" } } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Transaction" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /finance/transactions/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      tags: [Transactions]
+      operationId: getTransaction
+      summary: Every stored field of one transaction
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Transaction" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Transactions]
+      operationId: updateTransaction
+      summary: Update a transaction
+      description: |
+        Which fields may change depends on the record: bank-origin records allow only `notes`, `category_id`, `expense_id`,
+        `status`; manual records allow everything except `source` and `external_id`; transfer legs allow only
+        `description` and `notes`. A disallowed change is a `422` naming the field. Also available as `PUT`.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [transaction], properties: { transaction: { $ref: "#/components/schemas/TransactionInput" } } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Transaction" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+    delete:
+      tags: [Transactions]
+      operationId: deleteTransaction
+      summary: Delete a manual transaction
+      description: Only manual, non-transfer records. Bank records and transfer legs get `422` `{error}`.
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /finance/transactions/{id}/reconcile:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      tags: [Reconciliation]
+      operationId: reconcileTransaction
+      summary: Assign a category and/or a recurring expense
+      description: |
+        Sets status `matched` and clears `auto_assigned`. Choosing an `expense_id` implies that expense's category unless a
+        `category_id` is also given. Only `pulled` or `matched` records can be reconciled. The choice is remembered
+        for the transaction's merchant (merchant memory): other waiting records from the same merchant are pre-matched, and
+        the count is returned as `auto_matched`.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                category_id: { type: [integer, "null"] }
+                expense_id: { type: [integer, "null"] }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Transaction" }
+                  - type: object
+                    required: [auto_matched]
+                    properties: { auto_matched: { type: integer, description: Other records pre-matched by this choice. } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /finance/transactions/{id}/confirm:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      tags: [Reconciliation]
+      operationId: confirmTransaction
+      summary: Confirm a matched transaction
+      description: Sets status `confirmed`. An expense must already have a category (`422` otherwise).
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Transaction" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /finance/transactions/{id}/ignore:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      tags: [Reconciliation]
+      operationId: ignoreTransaction
+      summary: Ignore a transaction (not real spending)
+      description: Marks a record as not real spending. It still counts toward the account balance.
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Transaction" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /finance/transactions/confirm_auto:
+    post:
+      tags: [Reconciliation]
+      operationId: confirmAutoMatched
+      summary: Confirm every untouched auto-matched record
+      description: "Confirms all `matched` records with `auto_assigned: true` (assigned by merchant memory, not edited by hand)."
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, required: [confirmed], properties: { confirmed: { type: integer } } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /finance/transactions/{id}/link_transfer:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      tags: [Transfers]
+      operationId: linkTransfer
+      summary: Make a transaction one half of a transfer
+      description: |
+        For transfers across banks where one half is a bank record. Give **exactly one** of `counterpart_id` (pair with an
+        existing transaction on a different account with the equal and opposite amount) or `counterpart_account_id`
+        (create the missing manual half on that account: same date, opposite amount). Both legs become one `confirmed`
+        transfer, keep their own source, and any category/expense is cleared. A bank leg's amount and date never change.
+        Returns the two legs (this transaction first).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                counterpart_id: { type: integer }
+                counterpart_account_id: { type: integer }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, minItems: 2, maxItems: 2, items: { $ref: "#/components/schemas/Transaction" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /finance/transactions/{id}/transfer_candidates:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      tags: [Transfers]
+      operationId: transferCandidates
+      summary: Likely counterparts for link_transfer
+      description: Up to 20 non-transfer transactions on other accounts with the opposite amount, nearest date first.
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Transaction" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /finance/merchants:
+    get:
+      tags: [Merchants]
+      operationId: listMerchants
+      summary: Merchant memory rules
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Merchant" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Merchants]
+      operationId: createMerchant
+      summary: Create a merchant rule
+      description: Rules are normally learned by reconciling. A rule needs a category or an expense.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [merchant], properties: { merchant: { $ref: "#/components/schemas/MerchantInput" } } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Merchant" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /finance/merchants/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      tags: [Merchants]
+      operationId: getMerchant
+      summary: Get a merchant rule
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Merchant" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Merchants]
+      operationId: updateMerchant
+      summary: Update a merchant rule
+      description: "Set `auto_assign: false` to stop a merchant being pre-matched."
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [merchant], properties: { merchant: { $ref: "#/components/schemas/MerchantInput" } } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Merchant" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+    delete:
+      tags: [Merchants]
+      operationId: deleteMerchant
+      summary: Forget a merchant rule
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /finance/transfers:
+    get:
+      tags: [Transfers]
+      operationId: listTransfers
+      summary: Transfers, one entry per transfer (not per leg)
+      description: "Not paginated yet. A transfer with a single leg (e.g. a UP Round Up) has the missing side `null` and `paired: false`."
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Transfer" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Transfers]
+      operationId: createTransfer
+      summary: Create a manual transfer between two accounts
+      description: |
+        Creates two linked manual legs that net to zero. Do **not** use this for a transfer where one side is already a
+        bank record: that would double-count the outflow. Use `link_transfer` instead.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [transfer], properties: { transfer: { $ref: "#/components/schemas/TransferInput" } } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { type: object, required: [transfer_group_id], properties: { transfer_group_id: { type: string } } } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /finance/transfers/{group_id}:
+    parameters: [{ $ref: "#/components/parameters/GroupId" }]
+    delete:
+      tags: [Transfers]
+      operationId: deleteTransfer
+      summary: Delete a manual transfer
+      description: Deletes both legs. Refused (`422` `{error}`) if any leg is a bank record; use `unlink` instead.
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /finance/transfers/{group_id}/unlink:
+    parameters: [{ $ref: "#/components/parameters/GroupId" }]
+    post:
+      tags: [Transfers]
+      operationId: unlinkTransfer
+      summary: Turn a transfer that involves a bank record back into two ordinary transactions
+      description: |
+        Each leg returns to `income` or `expense` (by sign) with status `pulled`. A manual half that `link_transfer`
+        created is not deleted. Refused (`422`) for fully manual transfers; delete those instead.
+      responses:
+        "200": { description: The reverted legs, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Transaction" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /finance/transfers/needed:
+    get:
+      tags: [Planning]
+      operationId: transfersNeeded
+      summary: Transfers needed so each account can cover what it owes and what it will pay
+      description: |
+        For each account: `max(0, -(balance + upcoming_bills - what_it_sends_on))`, following the `funded_by` chain. Accounts
+        with a funder produce a transfer from the funder; the top of a chain reports a `shortfall_cents` instead.
+        Upcoming bills come from the forecast over today..`to` (at most 366 days) and can be switched off.
+      parameters:
+        - { name: to, in: query, description: "Last day to cover. Default: 30 days from today.", schema: { type: string, format: date } }
+        - { name: include_forecast, in: query, description: "Include upcoming bills (default true).", schema: { type: boolean, default: true } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/TransferPlan" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /finance/forecast:
+    get:
+      tags: [Planning]
+      operationId: forecast
+      summary: Dated upcoming bills
+      description: |
+        Projects each expense with an `anchor_date` over the range (month-end safe: a bill on the 31st returns to the 31st).
+        Amounts are negative; variable expenses use the average of their last 4 matched or confirmed transactions.
+        Does not check whether a bill was already paid early. Computed on request; nothing is stored.
+      parameters:
+        - { name: from, in: query, description: "Default: today.", schema: { type: string, format: date } }
+        - { name: to, in: query, description: "Default: 30 days from today. At most 366 days after `from`.", schema: { type: string, format: date } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Forecast" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /finance/pull/up:
+    post:
+      tags: [Bank pull]
+      operationId: pullUp
+      summary: Import accounts and transactions from UP
+      description: |
+        Fetches everything first and writes it in one database transaction, so a failed pull changes nothing.
+        Safe to repeat: records are identified by `(bank:up, UP id)`; bank fields refresh (e.g. held → settled) while
+        your category, notes and status are never touched. New accounts get an opening balance so their computed balance
+        matches UP's; every response reports per-account `drift_cents`. Transfers between your UP accounts are paired
+        into one confirmed transfer; a lone "Round Up" leg is counted in `round_up_transfers`.
+
+        The UP personal access token is sent in `X-Bank-Token`, is used for this request only, and is never stored or logged.
+      parameters:
+        - name: X-Bank-Token
+          in: header
+          required: true
+          description: UP personal access token.
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                since: { type: string, format: date, description: "Pull from this date. Default: 30 days ago. Cannot be in the future." }
+                dry_run: { type: boolean, description: "Preview only; nothing is saved.", default: false }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/PullResult" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { description: UP rate limit reached, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorMessage" } } } }
+        "502": { description: "UP rejected the token or could not be reached (distinct from 401, which is our own key).", content: { application/json: { schema: { $ref: "#/components/schemas/ErrorMessage" } } } }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: A key issued for the `finance` namespace.
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
+    GroupId:
+      name: group_id
+      in: path
+      required: true
+      description: A transfer's `transfer_group_id`.
+      schema: { type: string }
+
+  responses:
+    Unauthorized:
+      description: Missing, wrong, revoked, or wrong-namespace key. Empty body.
+    NotFound:
+      description: No such record. Empty body.
+    BadRequest:
+      description: Malformed request (missing wrapper key, invalid date, missing header).
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorMessage" } } }
+    Unprocessable:
+      description: |
+        Refused. The body is `{"errors": {field: [messages]}}` for validation failures, or `{"error": "message"}` for other
+        refusals (e.g. a reference to a record that does not exist, or a rule such as "bank records cannot be deleted").
+        Clients must accept either shape until error bodies are made uniform.
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - { $ref: "#/components/schemas/ValidationErrors" }
+              - { $ref: "#/components/schemas/ErrorMessage" }
+
+  schemas:
+    ValidationErrors:
+      type: object
+      required: [errors]
+      properties:
+        errors:
+          type: object
+          description: Field name (or `base`) to messages.
+          additionalProperties: { type: array, items: { type: string } }
+    ErrorMessage:
+      type: object
+      required: [error]
+      properties: { error: { type: string } }
+
+    AccountKind: { type: string, enum: [debit, credit, cash] }
+    TransactionKind: { type: string, enum: [expense, income, transfer] }
+    TransactionStatus: { type: string, enum: [pulled, matched, confirmed, ignored] }
+    Frequency: { type: string, enum: [daily, weekly, fortnightly, monthly, quarterly, biannually, annually, ad_hoc], description: "`ad_hoc`: a single planned bill on the anchor date, or never forecast without one." }
+    AmountMode: { type: string, enum: [fixed, variable] }
+
+    Account:
+      type: object
+      required: [id, name, kind, opening_balance_cents, balance_cents, created_at, updated_at]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        kind: { $ref: "#/components/schemas/AccountKind" }
+        funded_by_id: { type: [integer, "null"], description: The account that pays into this one (e.g. debit funds a credit card). Loops are rejected. }
+        opening_balance_cents: { type: integer }
+        opening_balance_on: { type: [string, "null"], format: date }
+        external_source: { type: [string, "null"], description: "e.g. `bank:up` when linked to a bank account." }
+        external_id: { type: [string, "null"] }
+        balance_cents: { type: integer, description: Computed. Opening balance plus transactions on or after the opening date. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AccountInput:
+      type: object
+      properties:
+        name: { type: string }
+        kind: { $ref: "#/components/schemas/AccountKind" }
+        funded_by_id: { type: [integer, "null"] }
+        opening_balance_cents: { type: integer }
+        opening_balance_on: { type: [string, "null"], format: date }
+        external_source: { type: [string, "null"] }
+        external_id: { type: [string, "null"], description: Both external fields must be set together. }
+
+    Category:
+      type: object
+      required: [id, name, created_at, updated_at]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        desired_account_id: { type: [integer, "null"], description: The account spending in this category should normally come from. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CategoryInput:
+      type: object
+      properties:
+        name: { type: string }
+        desired_account_id: { type: [integer, "null"] }
+
+    Expense:
+      type: object
+      required: [id, name, frequency, category_id, amount_mode, created_at, updated_at]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        frequency: { $ref: "#/components/schemas/Frequency" }
+        category_id: { type: integer }
+        amount_mode: { $ref: "#/components/schemas/AmountMode" }
+        expected_amount_cents: { type: [integer, "null"], minimum: 1, description: "Positive cost. Required when `amount_mode` is `fixed`; a fallback estimate otherwise." }
+        anchor_date: { type: [string, "null"], format: date, description: A known due date; later ones are projected from it. }
+        ends_on: { type: [string, "null"], format: date }
+        account_id: { type: [integer, "null"], description: The account this bill is normally paid from. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ExpenseInput:
+      type: object
+      properties:
+        name: { type: string }
+        frequency: { $ref: "#/components/schemas/Frequency" }
+        category_id: { type: integer }
+        amount_mode: { $ref: "#/components/schemas/AmountMode" }
+        expected_amount_cents: { type: [integer, "null"], minimum: 1 }
+        anchor_date: { type: [string, "null"], format: date }
+        ends_on: { type: [string, "null"], format: date }
+        account_id: { type: [integer, "null"] }
+
+    Transaction:
+      type: object
+      required: [id, source, external_id, date, amount_cents, status, kind, account_id, auto_assigned, created_at, updated_at]
+      properties:
+        id: { type: integer }
+        source: { type: string, description: "`MAN` for manual entries, else `bank:<name>`." }
+        external_id: { type: string }
+        account_id: { type: integer }
+        kind: { $ref: "#/components/schemas/TransactionKind" }
+        date: { type: string, format: date }
+        amount_cents: { type: integer, description: "Signed, never zero. Income is always positive." }
+        description: { type: [string, "null"] }
+        notes: { type: [string, "null"] }
+        status: { $ref: "#/components/schemas/TransactionStatus" }
+        category_id: { type: [integer, "null"] }
+        expense_id: { type: [integer, "null"] }
+        transfer_group_id: { type: [string, "null"], description: Set exactly when `kind` is `transfer`. }
+        merchant_key: { type: [string, "null"], description: Normalised description used by merchant memory. }
+        auto_assigned: { type: boolean, description: Assigned by merchant memory and not yet touched by hand. }
+        bank_status: { type: [string, "null"], enum: [held, settled, null] }
+        settled_at: { type: [string, "null"], format: date-time }
+        bank_category: { type: [string, "null"], description: "The bank's own category id. A hint only; never assigned automatically." }
+        raw_text: { type: [string, "null"], description: The bank's original description text. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    TransactionInput:
+      type: object
+      description: Which fields are accepted on update depends on the record; see PATCH /finance/transactions/{id}.
+      properties:
+        source: { type: string }
+        external_id: { type: string }
+        account_id: { type: integer }
+        kind: { type: string, enum: [expense, income], description: "`transfer` is refused." }
+        date: { type: string, format: date }
+        amount_cents: { type: integer }
+        description: { type: [string, "null"] }
+        notes: { type: [string, "null"] }
+        status: { $ref: "#/components/schemas/TransactionStatus" }
+        category_id: { type: [integer, "null"] }
+        expense_id: { type: [integer, "null"] }
+
+    Merchant:
+      type: object
+      required: [id, key, auto_assign, created_at, updated_at]
+      properties:
+        id: { type: integer }
+        key: { type: string }
+        category_id: { type: [integer, "null"] }
+        expense_id: { type: [integer, "null"] }
+        auto_assign: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    MerchantInput:
+      type: object
+      properties:
+        key: { type: string }
+        category_id: { type: [integer, "null"] }
+        expense_id: { type: [integer, "null"] }
+        auto_assign: { type: boolean }
+
+    Transfer:
+      type: object
+      required: [transfer_group_id, date, amount_cents, paired, deletable, round_up, legs]
+      properties:
+        transfer_group_id: { type: string }
+        date: { type: string, format: date }
+        amount_cents: { type: integer, minimum: 1, description: Always positive. }
+        from_account_id: { type: [integer, "null"], description: "`null` if the outgoing leg is not recorded." }
+        to_account_id: { type: [integer, "null"], description: "`null` if the incoming leg is not recorded." }
+        paired: { type: boolean, description: Both legs exist. }
+        deletable: { type: boolean, description: "All legs are manual, so `DELETE` is allowed. Otherwise use `unlink`." }
+        round_up: { type: boolean, description: Looks like an UP Round Up. }
+        description: { type: [string, "null"] }
+        notes: { type: [string, "null"] }
+        legs: { type: array, items: { type: integer }, description: Transaction ids. }
+    TransferInput:
+      type: object
+      required: [from_account_id, to_account_id, amount_cents, date]
+      properties:
+        from_account_id: { type: integer }
+        to_account_id: { type: integer }
+        amount_cents: { type: integer, minimum: 1, description: Positive. }
+        date: { type: string, format: date }
+        description: { type: string }
+        notes: { type: string }
+
+    Forecast:
+      type: object
+      required: [from, to, occurrences, total_cents, totals_by_account, unscheduled, unestimated]
+      properties:
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        occurrences:
+          type: array
+          items:
+            type: object
+            required: [date, expense_id, expense_name, category_id, amount_cents, basis]
+            properties:
+              date: { type: string, format: date }
+              expense_id: { type: integer }
+              expense_name: { type: string }
+              category_id: { type: integer }
+              account_id: { type: [integer, "null"] }
+              amount_cents: { type: [integer, "null"], description: "Negative. `null` when there is no history or expected amount." }
+              basis: { type: string, description: "`fixed`, `average of N`, `expected`, or `no history`." }
+        total_cents: { type: integer, description: Sum of known amounts; negative. }
+        totals_by_account:
+          type: object
+          description: "Account id (as a string; `\"\"` for bills with no account) to total cents."
+          additionalProperties: { type: integer }
+        unscheduled:
+          type: array
+          description: Recurring expenses with no `anchor_date`, so not forecast. `ad_hoc` expenses are not listed.
+          items:
+            type: object
+            properties: { expense_id: { type: integer }, expense_name: { type: string } }
+        unestimated: { type: integer, description: Occurrences with no amount. }
+
+    TransferPlan:
+      type: object
+      required: [to, include_forecast, transfers, accounts, unassigned_forecast_cents]
+      properties:
+        to: { type: string, format: date }
+        include_forecast: { type: boolean }
+        transfers:
+          type: array
+          items:
+            type: object
+            required: [from_account_id, to_account_id, amount_cents]
+            properties:
+              from_account_id: { type: integer }
+              to_account_id: { type: integer }
+              amount_cents: { type: integer, minimum: 1 }
+        accounts:
+          type: array
+          items:
+            type: object
+            required: [account_id, name, balance_cents, forecast_cents, outgoing_cents, transfer_in_cents, shortfall_cents]
+            properties:
+              account_id: { type: integer }
+              name: { type: string }
+              funded_by_id: { type: [integer, "null"] }
+              balance_cents: { type: integer }
+              forecast_cents: { type: integer, description: Upcoming bills on this account; negative. }
+              outgoing_cents: { type: integer, description: What this account must send on to accounts it funds. }
+              transfer_in_cents: { type: integer, description: What it should receive from its funder. }
+              shortfall_cents: { type: integer, description: "For the top of a chain: the amount it cannot cover itself." }
+        unassigned_forecast_cents: { type: integer, description: Upcoming bills with no account; not counted in any account above. }
+
+    PullResult:
+      type: object
+      required: [since, dry_run, transactions, changed_after_review, round_up_transfers, unpaired_transfers, accounts]
+      properties:
+        since: { type: string, format: date }
+        dry_run: { type: boolean }
+        transactions:
+          type: object
+          required: [created, updated, unchanged]
+          properties: { created: { type: integer }, updated: { type: integer }, unchanged: { type: integer } }
+        changed_after_review:
+          type: array
+          items: { type: integer }
+          description: Ids of records you had already reviewed that the bank then changed.
+        round_up_transfers: { type: integer }
+        unpaired_transfers: { type: integer, description: Lone transfer legs that are not Round Ups. }
+        accounts:
+          type: array
+          items:
+            type: object
+            required: [account_id, external_id, name, created, up_balance_cents, computed_balance_cents, drift_cents]
+            properties:
+              account_id: { type: integer }
+              external_id: { type: string }
+              name: { type: string }
+              created: { type: boolean }
+              up_balance_cents: { type: integer }
+              computed_balance_cents: { type: integer }
+              drift_cents: { type: integer, description: UP's balance minus ours; should be 0. }

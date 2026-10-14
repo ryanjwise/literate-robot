@@ -35,3 +35,8 @@ group :development, :test do
   gem "rspec-rails", "~> 8.0"
   gem "dotenv-rails"
 end
+
+group :test do
+  # Validates real responses against openapi/finance.yaml (see spec/support/openapi_contract.rb)
+  gem "openapi_first", "~> 3.3"
+end

@@ -72,6 +72,16 @@ For a transfer where only one half is a bank record (e.g. UP -> another bank, wi
 - Do not record an UP-to-other-bank transfer with the manual transfer form: it would add a second out-leg on the UP account
   and its balance would drift.
 
+## API spec
+`openapi/finance.yaml` (OpenAPI 3.1) describes every `/finance` route as it behaves today, including conventions (money,
+auth, transaction lifecycle) and known gaps (no pagination yet, non-uniform 422 bodies).
+- **Contract test:** every response from a `/finance` request spec is validated against it (`spec/support/openapi_contract.rb`),
+  so the spec cannot drift from the code. `OPENAPI_COVERAGE=1 bundle exec rspec` lists documented operations no spec exercises.
+- **Lint:** `npx @redocly/cli lint openapi/finance.yaml`
+- **TypeScript types:** `npx openapi-typescript openapi/finance.yaml -o finance.d.ts` (pair with `openapi-fetch` for a typed client).
+  Other languages: any OpenAPI 3.1 generator.
+- Change the API and the spec together; the contract test fails otherwise.
+
 ## Dev helpers
 - `bin/rails dev:sample_data` adds sample pulled records (source `bank:sample`) to try the reconcile UI; safe to re-run.
 - `bin/rails dev:clear_sample_data` removes them.
