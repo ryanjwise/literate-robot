@@ -27,8 +27,16 @@ module Finance
       return render_error("category_id or expense_id is required") if attrs.empty?
       return render_error("only pulled or matched records can be reconciled") unless %w[pulled matched].include?(record.status)
 
-      record.update!(attrs.merge(status: "matched"))
-      render json: record
+      record.update!(attrs.merge(status: "matched", auto_assigned: false))
+      merchant = Merchant.learn(record)
+      auto_matched = merchant ? merchant.apply_to_pending : 0
+      render json: record.as_json.merge("auto_matched" => auto_matched)
+    end
+
+    # Confirm everything the merchant memory matched that you have not touched.
+    def confirm_auto
+      count = Transaction.where(status: "matched", auto_assigned: true).update_all(status: "confirmed", updated_at: Time.current)
+      render json: { confirmed: count }
     end
 
     def confirm
@@ -45,10 +53,17 @@ module Finance
 
     def model = Transaction
 
+    # Filters: status, account_id, category_id, expense_id, kind, from/to (dates),
+    # and q (case-insensitive text match on description, notes and merchant).
     def scope
       scoped = Transaction.all
-      scoped = scoped.where(status: params[:status]) if params[:status]
-      scoped = scoped.where(account_id: params[:account_id]) if params[:account_id]
+      %i[status account_id category_id expense_id kind].each { scoped = scoped.where(_1 => params[_1]) if params[_1].present? }
+      scoped = scoped.where(date: date_param(:from, nil)..) if params[:from].present?
+      scoped = scoped.where(date: ..date_param(:to, nil)) if params[:to].present?
+      if params[:q].present?
+        like = "%#{Transaction.sanitize_sql_like(params[:q])}%"
+        scoped = scoped.where("description LIKE :q ESCAPE '\\' OR notes LIKE :q ESCAPE '\\' OR merchant_key LIKE :q ESCAPE '\\'", q: like)
+      end
       scoped
     end
 

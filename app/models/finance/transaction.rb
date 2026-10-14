@@ -8,7 +8,7 @@ module Finance
     # fixed: only these review fields may be edited. Manual records are
     # editable apart from their identity.
     IDENTITY_FIELDS = %w[source external_id].freeze
-    BANK_EDITABLE_FIELDS = %w[notes category_id expense_id status].freeze
+    BANK_EDITABLE_FIELDS = %w[notes category_id expense_id status auto_assigned].freeze
 
     # amount_cents is signed from the account's point of view:
     # negative = money out, positive = money in.
@@ -17,6 +17,8 @@ module Finance
     belongs_to :expense, optional: true
 
     before_validation :assign_manual_external_id, on: :create
+    before_validation :assign_merchant_key
+    before_validation :apply_merchant_default, on: :create
     before_validation :default_category_from_expense
 
     validates :source, :external_id, :date, presence: true
@@ -37,6 +39,18 @@ module Finance
     # Manual entries get a generated ID; pulled records carry the bank's own.
     def assign_manual_external_id
       self.external_id ||= SecureRandom.uuid if source == MANUAL_SOURCE
+    end
+
+    def assign_merchant_key
+      self.merchant_key = MerchantKey.normalize(description) if merchant_key.blank? || description_changed?
+    end
+
+    # A new bank record from a merchant we have seen arrives pre-matched.
+    def apply_merchant_default
+      return unless status == "pulled" && kind == "expense" && !manual? && category_id.nil? && expense_id.nil?
+      merchant = merchant_key && Merchant.auto.find_by(key: merchant_key)
+      return unless merchant
+      assign_attributes(category_id: merchant.category_id, expense_id: merchant.expense_id, status: "matched", auto_assigned: true)
     end
 
     # Picking a recurring expense implies its category unless one is already set.

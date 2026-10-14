@@ -32,6 +32,21 @@ Roll a key: create the new one, move clients over, revoke the old one.
 - Transactions are unique on `(source, external_id)`; manual entries use source `MAN` with a generated id.
 - Amounts are integer `amount_cents`. States and frequencies are enforced by DB CHECK constraints.
 
+## Merchant memory
+Each transaction gets a `merchant_key` (normalized description). Reconciling an expense-kind record saves a
+`merchants` rule (key -> category and/or expense) and pre-matches every other waiting record from that merchant
+(`auto_assigned: true`). New bank records from a known merchant arrive pre-matched. `POST /finance/transactions/confirm_auto`
+confirms all untouched auto-matched records. Rules are managed at `/finance/merchants` (turn `auto_assign` off to stop one).
+
+## Forecast and transfers
+- Expenses can carry `anchor_date` (a due date), `frequency`, optional `ends_on`, `amount_mode` (`fixed` needs
+  `expected_amount_cents`; `variable` uses the average of the last 4 matched/confirmed transactions), and `account_id`.
+- `GET /finance/forecast?from=&to=` (max 366 days) lists dated outflows (negative cents), totals per account, and
+  expenses with no anchor. It does not check whether a bill was already paid early.
+- `GET /finance/transfers/needed?to=&include_forecast=true` returns the transfers that cover each account along
+  the `funded_by` chain: `max(0, -(balance + upcoming bills - what it sends on))`. The top of a chain reports a shortfall.
+- `GET /finance/transactions` filters: `status`, `account_id`, `category_id`, `expense_id`, `kind`, `from`, `to`, `q`.
+
 ## Dev helpers
 - `bin/rails dev:sample_data` adds sample pulled records (source `bank:sample`) to try the reconcile UI; safe to re-run.
 - `bin/rails dev:clear_sample_data` removes them.

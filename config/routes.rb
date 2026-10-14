@@ -6,10 +6,15 @@ Rails.application.routes.draw do
 
   namespace :finance do
     resources :accounts
-    resources :transfers, only: %i[index create destroy]
+    resources :transfers, only: %i[index create destroy] do
+      get :needed, on: :collection
+    end
+    get :forecast, to: "forecasts#show"
     resources :categories
     resources :expenses
+    resources :merchants
     resources :transactions do
+      collection { post :confirm_auto }
       member do
         post :reconcile
         post :confirm

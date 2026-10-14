@@ -13,6 +13,14 @@ module Finance
       end
     end
 
+    # GET /finance/transfers/needed?to=YYYY-MM-DD&include_forecast=true
+    def needed
+      planner = TransferPlanner.new(to: date_param(:to, 30.days.from_now.to_date),
+                                    include_forecast: params[:include_forecast] != "false")
+      return render json: { error: "range must be at most #{Forecast::MAX_DAYS} days" }, status: :unprocessable_content unless planner.valid?
+      render json: planner
+    end
+
     def destroy
       Transfer.destroy_group!(params[:id])
       head :no_content

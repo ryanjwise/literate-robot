@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_14_000004) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_14_000006) do
   create_table "api_keys", force: :cascade do |t|
     t.string "namespace", null: false
     t.string "name", null: false
@@ -49,8 +49,29 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_14_000004) do
     t.integer "category_id", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.integer "expected_amount_cents"
+    t.string "amount_mode", default: "variable", null: false
+    t.date "anchor_date"
+    t.date "ends_on"
+    t.integer "account_id"
+    t.index ["account_id"], name: "index_finance_expenses_on_account_id"
     t.index ["category_id"], name: "index_finance_expenses_on_category_id"
+    t.check_constraint "amount_mode <> 'fixed' OR expected_amount_cents IS NOT NULL", name: "finance_expenses_fixed_has_amount_check"
+    t.check_constraint "amount_mode IN ('fixed','variable')", name: "finance_expenses_amount_mode_check"
+    t.check_constraint "expected_amount_cents IS NULL OR expected_amount_cents > 0", name: "finance_expenses_expected_positive_check"
     t.check_constraint "frequency IN ('daily','weekly','fortnightly','monthly','quarterly','biannually','annually')", name: "finance_expenses_frequency_check"
+  end
+
+  create_table "finance_merchants", force: :cascade do |t|
+    t.string "key", null: false
+    t.integer "category_id"
+    t.integer "expense_id"
+    t.boolean "auto_assign", default: true, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["category_id"], name: "index_finance_merchants_on_category_id"
+    t.index ["expense_id"], name: "index_finance_merchants_on_expense_id"
+    t.index ["key"], name: "index_finance_merchants_on_key", unique: true
   end
 
   create_table "finance_transactions", force: :cascade do |t|
@@ -68,9 +89,12 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_14_000004) do
     t.string "kind", default: "expense", null: false
     t.string "transfer_group_id"
     t.integer "category_id"
+    t.string "merchant_key"
+    t.boolean "auto_assigned", default: false, null: false
     t.index ["account_id"], name: "index_finance_transactions_on_account_id"
     t.index ["category_id"], name: "index_finance_transactions_on_category_id"
     t.index ["expense_id"], name: "index_finance_transactions_on_expense_id"
+    t.index ["merchant_key"], name: "index_finance_transactions_on_merchant_key"
     t.index ["source", "external_id"], name: "index_finance_transactions_on_source_and_external_id", unique: true
     t.index ["status"], name: "index_finance_transactions_on_status"
     t.check_constraint "(kind = 'transfer') = (transfer_group_id IS NOT NULL)", name: "finance_transactions_transfer_group_check"
@@ -81,7 +105,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_14_000004) do
   end
 
   add_foreign_key "finance_accounts", "finance_accounts", column: "funded_by_id"
+  add_foreign_key "finance_expenses", "finance_accounts", column: "account_id"
   add_foreign_key "finance_expenses", "finance_categories", column: "category_id"
+  add_foreign_key "finance_merchants", "finance_categories", column: "category_id"
+  add_foreign_key "finance_merchants", "finance_expenses", column: "expense_id"
   add_foreign_key "finance_transactions", "finance_accounts", column: "account_id"
   add_foreign_key "finance_transactions", "finance_categories", column: "category_id"
   add_foreign_key "finance_transactions", "finance_expenses", column: "expense_id"

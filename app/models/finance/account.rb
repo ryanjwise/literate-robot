@@ -9,6 +9,7 @@ module Finance
     validates :kind, inclusion: { in: KINDS }
     validates :opening_balance_cents, numericality: { only_integer: true }
     validate :not_funded_by_itself
+    validate :funding_chain_has_no_cycle
 
     # Running balance: opening balance plus every transaction on or after the
     # opening date. Credit accounts go negative as money is owed.
@@ -20,6 +21,16 @@ module Finance
     def as_json(options = nil) = super.merge("balance_cents" => balance_cents)
 
     private
+
+    def funding_chain_has_no_cycle
+      seen = [id]
+      current = funded_by
+      while current
+        return errors.add(:funded_by_id, "would create a funding loop") if seen.include?(current.id)
+        seen << current.id
+        current = current.funded_by
+      end
+    end
 
     def not_funded_by_itself
       errors.add(:funded_by_id, "cannot be the account itself") if funded_by_id && funded_by_id == id

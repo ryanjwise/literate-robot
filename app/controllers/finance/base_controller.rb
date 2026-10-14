@@ -3,6 +3,10 @@ module Finance
     include ApiKeyAuthentication
     self.api_namespace = :finance
 
+    rescue_from Date::Error do
+      render json: { error: "invalid date" }, status: :bad_request
+    end
+
     rescue_from ActiveRecord::RecordNotFound do
       head :not_found
     end
@@ -11,6 +15,12 @@ module Finance
     end
     rescue_from ActionController::ParameterMissing do |e|
       render json: { error: e.message }, status: :bad_request
+    end
+  
+    private
+
+    def date_param(name, default)
+      params[name].present? ? Date.iso8601(params[name]) : default
     end
   end
 end

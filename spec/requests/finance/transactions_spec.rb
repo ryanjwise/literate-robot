@@ -82,3 +82,42 @@ RSpec.describe "Finance transactions", type: :request do
     expect(response).to have_http_status(:unprocessable_content)
   end
 end
+
+RSpec.describe "Finance transaction search", type: :request do
+  let(:headers) { auth_headers }
+  let(:account) { make_account }
+
+  before do
+    [["a", "2026-09-01", "WOOLWORTHS NEWTOWN", "weekly shop"], ["b", "2026-10-01", "NETFLIX.COM", nil],
+     ["c", "2026-10-10", "100% PURE JUICE", nil]].each do |id, date, desc, notes|
+      Finance::Transaction.create!(source: "bank:up", external_id: id, account:, date:, amount_cents: -100, description: desc, notes:)
+    end
+  end
+
+  def ids(**params)
+    get "/finance/transactions", headers: headers, params: params
+    json.map { _1["external_id"] }.sort
+  end
+
+  it "searches description, notes and merchant case-insensitively" do
+    expect(ids(q: "woolworths")).to eq(%w[a])
+    expect(ids(q: "weekly")).to eq(%w[a])
+    expect(ids(q: "NETFLIX COM")).to eq(%w[b])
+  end
+
+  it "treats % and _ literally" do
+    expect(ids(q: "100%")).to eq(%w[c])
+    expect(ids(q: "%")).to eq(%w[c])
+  end
+
+  it "filters by date range and combines filters" do
+    expect(ids(from: "2026-10-01")).to eq(%w[b c])
+    expect(ids(from: "2026-09-15", to: "2026-10-05")).to eq(%w[b])
+    expect(ids(q: "pure", from: "2026-10-01", kind: "expense")).to eq(%w[c])
+  end
+
+  it "rejects a bad date" do
+    get "/finance/transactions", headers: headers, params: { from: "yesterday" }
+    expect(response).to have_http_status(:bad_request)
+  end
+end

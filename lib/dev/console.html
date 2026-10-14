@@ -116,16 +116,20 @@ const views = {
   async transactions() {
     await Promise.all([loadAccounts(), loadLookups()]);
     const filter = h("select", {}, ["", "pulled", "matched", "confirmed", "ignored"].map((s) => h("option", { value: s }, s || "all")));
+    const q = h("input", { type: "search", placeholder: "search description / notes / merchant" });
+    const from = h("input", { type: "date" }), to = h("input", { type: "date" });
     const body = h("div");
     const load = async () => {
-      const list = await api("GET", "/transactions" + (filter.value ? "?status=" + filter.value : ""));
+      const qs = new URLSearchParams();
+      for (const [k, el] of [["status", filter], ["q", q], ["from", from], ["to", to]]) if (el.value) qs.set(k, el.value);
+      const list = await api("GET", "/transactions" + (qs.size ? "?" + qs : ""));
       // Bank records and transfer legs cannot be deleted here; the API refuses.
       body.replaceChildren(table(txnHeads.concat(""), txnRows(list, (t) => t.source !== "MAN" || t.kind === "transfer" ? "" :
         h("button", { onclick: async () => { if (confirm("Delete?")) { await run(() => api("DELETE", "/transactions/" + t.id)); load(); } } }, "delete"))));
     };
-    filter.addEventListener("change", () => run(load));
+    for (const el of [filter, q, from, to]) el.addEventListener("change", () => run(load));
     await load();
-    return [field("Status", filter), body];
+    return [h("div", { style: "display:flex;gap:.5rem;flex-wrap:wrap" }, field("Status", filter), field("Search", q), field("From", from), field("To", to)), body];
   },
 
   async reconcile() {
@@ -134,7 +138,12 @@ const views = {
     const list = await api("GET", "/transactions?status=pulled");
     const matched = await api("GET", "/transactions?status=matched");
     const reload = () => show("reconcile");
-    const post = (t, action, body) => run(async () => { await api("POST", `/transactions/${t.id}/${action}`, body); reload(); });
+    const post = (t, action, body) => run(async () => {
+      const res = await api("POST", `/transactions/${t.id}/${action}`, body);
+      await reload();
+      if (res?.auto_matched) say(`Matched. Also pre-matched ${res.auto_matched} other record(s) from the same merchant.`);
+    });
+    const autoCount = matched.filter((t) => t.auto_assigned).length;
     const pick = (t) => {
       if (t.kind !== "expense") return h("span", {}, h("button", { onclick: () => post(t, "confirm") }, "confirm"), h("button", { onclick: () => post(t, "ignore") }, "ignore"));
       const cat = h("select", {}, optionList(cats, "(category)"));
@@ -147,8 +156,72 @@ const views = {
     return [
       h("p", {}, "Choose a category, or a recurring expense (which sets its category), then match. Income needs no category."),
       h("h2", {}, `Pulled (${list.length})`), table(txnHeads.concat(""), txnRows(list, pick)),
-      h("h2", {}, `Matched, awaiting confirmation (${matched.length})`), table(txnHeads.concat(""), txnRows(matched, confirmBtn)),
+      h("h2", {}, `Matched, awaiting confirmation (${matched.length})`),
+      h("p", {}, h("button", { disabled: autoCount === 0, onclick: () => run(async () => {
+        const r = await api("POST", "/transactions/confirm_auto"); await reload(); say(`Confirmed ${r.confirmed} auto-matched record(s).`); }) },
+        `Confirm all auto-matched (${autoCount})`), " Auto-matched = assigned by merchant memory and not touched by you."),
+      table(txnHeads.concat(""), txnRows(matched, (t) => h("span", {}, confirmBtn(t), t.auto_assigned ? " auto" : ""))),
     ];
+  },
+
+
+  async merchants() {
+    const { cats, exps } = await loadLookups();
+    const list = await api("GET", "/merchants");
+    const toggle = (m) => h("input", { type: "checkbox", checked: m.auto_assign, onchange: (e) =>
+      run(() => api("PATCH", "/merchants/" + m.id, { merchant: { auto_assign: e.target.checked } })) });
+    const del = (m) => h("button", { onclick: () => run(async () => { await api("DELETE", "/merchants/" + m.id); show("merchants"); }) }, "forget");
+    return [
+      h("p", {}, "Learned when you match a record. New and waiting records from the same merchant get the same category/expense."),
+      table(["Merchant key", "Category", "Recurring expense", "Auto-assign", ""], list.map((m) => h("tr", {},
+        h("td", {}, m.key), h("td", {}, catName(m.category_id)), h("td", {}, expName(m.expense_id)),
+        h("td", {}, toggle(m)), h("td", {}, del(m))))),
+    ];
+  },
+
+  async forecast() {
+    await Promise.all([loadAccounts(), loadLookups()]);
+    const today = new Date().toISOString().slice(0, 10);
+    const from = h("input", { type: "date", value: today });
+    const to = h("input", { type: "date", value: new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10) });
+    const out = h("div");
+    const load = () => run(async () => {
+      const f = await api("GET", `/forecast?from=${from.value}&to=${to.value}`);
+      out.replaceChildren(
+        h("h2", {}, `Upcoming bills: ${dollars(f.total_cents)}`),
+        table(["Date", "Expense", "Category", "Account", "Amount", "Basis"], f.occurrences.map((o) => h("tr", {},
+          h("td", {}, o.date), h("td", {}, o.expense_name), h("td", {}, catName(o.category_id)), h("td", {}, o.account_id ? acct(o.account_id) : "(no account)"),
+          h("td", { class: "num" }, o.amount_cents == null ? "?" : dollars(o.amount_cents)), h("td", {}, o.basis)))),
+        h("h2", {}, "By account"),
+        table(["Account", "Total"], Object.entries(f.totals_by_account).map(([id, c]) => h("tr", {}, h("td", {}, id ? acct(id) || "(no account)" : "(no account)"), h("td", { class: "num" }, dollars(c))))),
+        f.unscheduled.length ? h("p", {}, "No anchor date, so not forecast: " + f.unscheduled.map((u) => u.expense_name).join(", ")) : "",
+        f.unestimated ? h("p", {}, `${f.unestimated} occurrence(s) have no amount yet (no history or expected amount).`) : "");
+    });
+    [from, to].forEach((el) => el.addEventListener("change", load));
+    await load();
+    return [h("div", { style: "display:flex;gap:.5rem" }, field("From", from), field("To", to)), out];
+  },
+
+  async plan() {
+    await loadAccounts();
+    const to = h("input", { type: "date", value: new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10) });
+    const inc = h("input", { type: "checkbox", checked: true });
+    const out = h("div");
+    const load = () => run(async () => {
+      const p = await api("GET", `/transfers/needed?to=${to.value}&include_forecast=${inc.checked}`);
+      out.replaceChildren(
+        h("h2", {}, "Transfers to make"),
+        p.transfers.length ? table(["From", "To", "Amount"], p.transfers.map((t) => h("tr", {}, h("td", {}, acct(t.from_account_id)), h("td", {}, acct(t.to_account_id)), h("td", { class: "num" }, dollars(t.amount_cents)))))
+          : h("p", {}, "Nothing needed."),
+        h("h2", {}, "Per account"),
+        table(["Account", "Balance", "Upcoming bills", "Sends on", "Receives", "Shortfall"], p.accounts.map((a) => h("tr", {},
+          h("td", {}, a.name), h("td", { class: "num" }, dollars(a.balance_cents)), h("td", { class: "num" }, dollars(a.forecast_cents)),
+          h("td", { class: "num" }, dollars(a.outgoing_cents)), h("td", { class: "num" }, dollars(a.transfer_in_cents)), h("td", { class: "num" }, dollars(a.shortfall_cents))))),
+        p.unassigned_forecast_cents ? h("p", {}, `Bills with no account (not counted above): ${dollars(p.unassigned_forecast_cents)}`) : "");
+    });
+    to.addEventListener("change", load); inc.addEventListener("change", load);
+    await load();
+    return [h("div", { style: "display:flex;gap:.5rem;align-items:end" }, field("Cover bills until", to), h("label", {}, inc, " include upcoming bills")), out];
   },
 
   async accounts() {
@@ -221,6 +294,7 @@ const views = {
 
   async setup() {
     const { cats, exps } = await loadLookups();
+    const accts = await loadAccounts();
     const catForm = h("form", { onsubmit: (e) => { e.preventDefault(); run(async () => {
       const d = new FormData(catForm);
       await api("POST", "/categories", { category: { name: d.get("name"), desired_source: d.get("desired_source") } });
@@ -231,15 +305,24 @@ const views = {
     const freqs = ["daily", "weekly", "fortnightly", "monthly", "quarterly", "biannually", "annually"];
     const expForm = h("form", { onsubmit: (e) => { e.preventDefault(); run(async () => {
       const d = new FormData(expForm);
-      await api("POST", "/expenses", { expense: { name: d.get("name"), frequency: d.get("frequency"), category_id: d.get("category_id") } });
+      const amt = d.get("expected");
+      await api("POST", "/expenses", { expense: { name: d.get("name"), frequency: d.get("frequency"), category_id: d.get("category_id"),
+        amount_mode: d.get("amount_mode"), expected_amount_cents: amt ? toCents(amt) : null,
+        anchor_date: d.get("anchor_date") || null, ends_on: d.get("ends_on") || null, account_id: d.get("account_id") || null } });
       show("setup"); }); } },
       field("Name", h("input", { name: "name", required: true })),
       field("Frequency", h("select", { name: "frequency" }, freqs.map((x) => h("option", {}, x)))),
       field("Category", h("select", { name: "category_id", required: true }, cats.map((c) => h("option", { value: c.id }, c.name)))),
+      field("Amount", h("select", { name: "amount_mode" }, ["variable", "fixed"].map((x) => h("option", {}, x)))),
+      field("Expected amount ($, required if fixed)", h("input", { name: "expected", type: "number", step: "0.01", min: "0.01" })),
+      field("Next due date (anchor)", h("input", { name: "anchor_date", type: "date" })),
+      field("Ends on (optional)", h("input", { name: "ends_on", type: "date" })),
+      field("Paid from", h("select", { name: "account_id" }, optionList(accts, "(none)"))),
       h("button", { type: "submit" }, "Add expense"));
     return [
       h("h2", {}, "Categories"), table(["ID", "Name", "Desired source"], cats.map((c) => h("tr", {}, h("td", {}, c.id), h("td", {}, c.name), h("td", {}, c.desired_source || "")))), catForm,
-      h("h2", {}, "Expenses"), table(["ID", "Name", "Frequency", "Category"], exps.map((x) => h("tr", {}, h("td", {}, x.id), h("td", {}, x.name), h("td", {}, x.frequency), h("td", {}, catName(x.category_id))))), expForm,
+      h("h2", {}, "Expenses"), table(["ID", "Name", "Frequency", "Category", "Amount", "Next due", "Paid from"], exps.map((x) => h("tr", {}, h("td", {}, x.id), h("td", {}, x.name), h("td", {}, x.frequency), h("td", {}, catName(x.category_id)),
+        h("td", {}, x.amount_mode + (x.expected_amount_cents ? " " + dollars(x.expected_amount_cents) : "")), h("td", {}, x.anchor_date || ""), h("td", {}, x.account_id ? acct(x.account_id) : "")))), expForm,
     ];
   },
 };

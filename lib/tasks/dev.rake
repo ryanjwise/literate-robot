@@ -11,8 +11,12 @@ namespace :dev do
     utilities = Finance::Category.find_or_create_by!(name: "Utilities")
     groceries = Finance::Category.find_or_create_by!(name: "Groceries")
     entertainment = Finance::Category.find_or_create_by!(name: "Entertainment")
-    Finance::Expense.find_or_create_by!(name: "Power") { |e| e.frequency = "monthly"; e.category = utilities }
-    Finance::Expense.find_or_create_by!(name: "Netflix") { |e| e.frequency = "monthly"; e.category = entertainment }
+    power = Finance::Expense.find_or_create_by!(name: "Power") { |e| e.frequency = "monthly"; e.category = utilities }
+    netflix = Finance::Expense.find_or_create_by!(name: "Netflix") { |e| e.frequency = "monthly"; e.category = entertainment }
+    # Schedules so the forecast and transfer plan have something to show (only filled in if unset).
+    power.update!(anchor_date: Date.current.next_month.beginning_of_month + 4, account: everyday) if power.anchor_date.nil?
+    netflix.update!(anchor_date: Date.current + 6, amount_mode: "fixed", expected_amount_cents: 2_299, account: visa) if netflix.anchor_date.nil?
+    everyday.update!(opening_balance_cents: 150_000, opening_balance_on: Date.current - 30) if everyday.opening_balance_cents.zero?
 
     today = Date.current
     samples = [
