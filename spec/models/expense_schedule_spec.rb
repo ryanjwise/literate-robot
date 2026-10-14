@@ -26,6 +26,13 @@ RSpec.describe Finance::Expense do
         .to eq(%w[2026-03-01 2027-03-01])
     end
 
+    it "treats ad hoc as a single planned bill, or nothing without a date" do
+      one_off = expense(frequency: "ad_hoc", anchor: "2026-11-10")
+      expect(one_off.due_dates(d("2026-11-01"), d("2026-12-31"))).to eq([d("2026-11-10")])
+      expect(one_off.due_dates(d("2026-11-11"), d("2026-12-31"))).to eq([])
+      expect(expense(frequency: "ad_hoc", anchor: nil).due_dates(d("2026-01-01"), d("2026-12-31"))).to eq([])
+    end
+
     it "respects the range start, the end date, and a missing anchor" do
       e = expense(anchor: "2026-01-10", ends_on: "2026-03-10")
       expect(e.due_dates(d("2026-02-01"), d("2026-12-31")).map(&:to_s)).to eq(%w[2026-02-10 2026-03-10])

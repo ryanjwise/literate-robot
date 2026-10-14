@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_14_000006) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_14_000007) do
   create_table "api_keys", force: :cascade do |t|
     t.string "namespace", null: false
     t.string "name", null: false
@@ -37,9 +37,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_14_000006) do
 
   create_table "finance_categories", force: :cascade do |t|
     t.string "name", null: false
-    t.string "desired_source"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.integer "desired_account_id"
+    t.index ["desired_account_id"], name: "index_finance_categories_on_desired_account_id"
     t.index ["name"], name: "index_finance_categories_on_name", unique: true
   end
 
@@ -59,7 +60,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_14_000006) do
     t.check_constraint "amount_mode <> 'fixed' OR expected_amount_cents IS NOT NULL", name: "finance_expenses_fixed_has_amount_check"
     t.check_constraint "amount_mode IN ('fixed','variable')", name: "finance_expenses_amount_mode_check"
     t.check_constraint "expected_amount_cents IS NULL OR expected_amount_cents > 0", name: "finance_expenses_expected_positive_check"
-    t.check_constraint "frequency IN ('daily','weekly','fortnightly','monthly','quarterly','biannually','annually')", name: "finance_expenses_frequency_check"
+    t.check_constraint "frequency IN ('daily','weekly','fortnightly','monthly','quarterly','biannually','annually','ad_hoc')", name: "finance_expenses_frequency_check"
   end
 
   create_table "finance_merchants", force: :cascade do |t|
@@ -105,6 +106,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_14_000006) do
   end
 
   add_foreign_key "finance_accounts", "finance_accounts", column: "funded_by_id"
+  add_foreign_key "finance_categories", "finance_accounts", column: "desired_account_id"
   add_foreign_key "finance_expenses", "finance_accounts", column: "account_id"
   add_foreign_key "finance_expenses", "finance_categories", column: "category_id"
   add_foreign_key "finance_merchants", "finance_categories", column: "category_id"

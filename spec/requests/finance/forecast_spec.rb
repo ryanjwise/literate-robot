@@ -18,6 +18,7 @@ RSpec.describe "Finance forecast and transfers needed", type: :request do
       bill("Power", 15_000, "2026-10-20", account: debit)
       bill("Netflix", 2_299, "2026-10-25", account: card)
       Finance::Expense.create!(name: "Rego", frequency: "annually", category:)
+      Finance::Expense.create!(name: "Dentist", frequency: "ad_hoc", category:) # ad hoc: not "unscheduled"
 
       get "/finance/forecast", headers: headers, params: { from: "2026-10-14", to: "2026-11-30" }
       expect(json["occurrences"].map { [_1["date"], _1["expense_name"], _1["amount_cents"]] }).to eq(

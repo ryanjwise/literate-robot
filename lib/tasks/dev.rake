@@ -8,9 +8,9 @@ namespace :dev do
     everyday = Finance::Account.find_or_create_by!(name: "Everyday") { _1.kind = "debit" }
     visa = Finance::Account.find_or_create_by!(name: "Visa") { |a| a.kind = "credit"; a.funded_by = everyday }
 
-    utilities = Finance::Category.find_or_create_by!(name: "Utilities")
-    groceries = Finance::Category.find_or_create_by!(name: "Groceries")
-    entertainment = Finance::Category.find_or_create_by!(name: "Entertainment")
+    utilities = Finance::Category.find_or_create_by!(name: "Utilities") { _1.desired_account = everyday }
+    groceries = Finance::Category.find_or_create_by!(name: "Groceries") { _1.desired_account = visa }
+    entertainment = Finance::Category.find_or_create_by!(name: "Entertainment") { _1.desired_account = visa }
     power = Finance::Expense.find_or_create_by!(name: "Power") { |e| e.frequency = "monthly"; e.category = utilities }
     netflix = Finance::Expense.find_or_create_by!(name: "Netflix") { |e| e.frequency = "monthly"; e.category = entertainment }
     # Schedules so the forecast and transfer plan have something to show (only filled in if unset).
@@ -25,6 +25,7 @@ namespace :dev do
       { id: "s3", account: visa, days: 3, cents: -2_299, desc: "NETFLIX.COM" },
       { id: "s4", account: everyday, days: 4, cents: 245_000, desc: "SALARY ACME PTY LTD", kind: "income" },
       { id: "s5", account: visa, days: 5, cents: -3_450, desc: "AMAZON AU *<b>MKTPLACE</b>" }, # checks HTML is shown as text
+      { id: "s7", account: visa, days: 0, cents: -4_380, desc: "WOOLWORTHS 5678 NEWTOWN" }, # same merchant as s2, to test auto-match
       { id: "s6", account: visa, days: 6, cents: -6_120, desc: "WOOLWORTHS 1234 NEWTOWN", category: groceries, status: "matched" },
     ]
     samples.each do |s|

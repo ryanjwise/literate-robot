@@ -1,6 +1,7 @@
 module Finance
   class Expense < ApplicationRecord
-    FREQUENCIES = %w[daily weekly fortnightly monthly quarterly biannually annually].freeze
+    # ad_hoc = no schedule: with an anchor date it is a single planned bill, without one it is never forecast.
+    FREQUENCIES = %w[daily weekly fortnightly monthly quarterly biannually annually ad_hoc].freeze
     AMOUNT_MODES = %w[fixed variable].freeze
     # Whole-month steps for the month-based frequencies; day steps for the rest.
     MONTH_STEPS = { "monthly" => 1, "quarterly" => 3, "biannually" => 6, "annually" => 12 }.freeze
@@ -21,6 +22,7 @@ module Finance
     # addition) so a bill due on the 31st returns to the 31st after a short month.
     def due_dates(from, to)
       return [] unless anchor_date
+      return (anchor_date.between?(from, to) ? [anchor_date] : []) if ad_hoc?
       last = ends_on ? [to, ends_on].min : to
       dates = []
       (0..).each do |n|
@@ -41,6 +43,8 @@ module Finance
       return [expected_amount_cents, "expected"] if expected_amount_cents
       [nil, "no history"]
     end
+
+    def ad_hoc? = frequency == "ad_hoc"
 
     private
 

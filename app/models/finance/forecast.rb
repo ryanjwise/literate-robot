@@ -26,7 +26,7 @@ module Finance
     end
 
     def unscheduled
-      Expense.where(anchor_date: nil).pluck(:id, :name).map { |id, name| { expense_id: id, expense_name: name } }
+      Expense.where(anchor_date: nil).where.not(frequency: "ad_hoc").pluck(:id, :name).map { |id, name| { expense_id: id, expense_name: name } }
     end
 
     # Sum of forecast outflows per account (negative cents); nil key = no account set.

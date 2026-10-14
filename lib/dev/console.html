@@ -297,12 +297,12 @@ const views = {
     const accts = await loadAccounts();
     const catForm = h("form", { onsubmit: (e) => { e.preventDefault(); run(async () => {
       const d = new FormData(catForm);
-      await api("POST", "/categories", { category: { name: d.get("name"), desired_source: d.get("desired_source") } });
+      await api("POST", "/categories", { category: { name: d.get("name"), desired_account_id: d.get("desired_account_id") || null } });
       show("setup"); }); } },
       field("Name", h("input", { name: "name", required: true })),
-      field("Desired source", h("input", { name: "desired_source" })),
+      field("Desired account", h("select", { name: "desired_account_id" }, optionList(accts, "(none)"))),
       h("button", { type: "submit" }, "Add category"));
-    const freqs = ["daily", "weekly", "fortnightly", "monthly", "quarterly", "biannually", "annually"];
+    const freqs = ["daily", "weekly", "fortnightly", "monthly", "quarterly", "biannually", "annually", "ad_hoc"];
     const expForm = h("form", { onsubmit: (e) => { e.preventDefault(); run(async () => {
       const d = new FormData(expForm);
       const amt = d.get("expected");
@@ -320,7 +320,7 @@ const views = {
       field("Paid from", h("select", { name: "account_id" }, optionList(accts, "(none)"))),
       h("button", { type: "submit" }, "Add expense"));
     return [
-      h("h2", {}, "Categories"), table(["ID", "Name", "Desired source"], cats.map((c) => h("tr", {}, h("td", {}, c.id), h("td", {}, c.name), h("td", {}, c.desired_source || "")))), catForm,
+      h("h2", {}, "Categories"), table(["ID", "Name", "Desired account"], cats.map((c) => h("tr", {}, h("td", {}, c.id), h("td", {}, c.name), h("td", {}, c.desired_account_id ? acct(c.desired_account_id) : "")))), catForm,
       h("h2", {}, "Expenses"), table(["ID", "Name", "Frequency", "Category", "Amount", "Next due", "Paid from"], exps.map((x) => h("tr", {}, h("td", {}, x.id), h("td", {}, x.name), h("td", {}, x.frequency), h("td", {}, catName(x.category_id)),
         h("td", {}, x.amount_mode + (x.expected_amount_cents ? " " + dollars(x.expected_amount_cents) : "")), h("td", {}, x.anchor_date || ""), h("td", {}, x.account_id ? acct(x.account_id) : "")))), expForm,
     ];

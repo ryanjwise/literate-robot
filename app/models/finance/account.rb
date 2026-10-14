@@ -4,6 +4,10 @@ module Finance
 
     belongs_to :funded_by, class_name: "Finance::Account", optional: true
     has_many :transactions, dependent: :restrict_with_error
+    has_many :expenses, dependent: :restrict_with_error
+    has_many :categories, foreign_key: :desired_account_id, inverse_of: :desired_account, dependent: :restrict_with_error
+    has_many :funded_accounts, class_name: "Finance::Account", foreign_key: :funded_by_id, inverse_of: :funded_by,
+                               dependent: :restrict_with_error
 
     validates :name, presence: true, uniqueness: true
     validates :kind, inclusion: { in: KINDS }

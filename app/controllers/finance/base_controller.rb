@@ -7,6 +7,11 @@ module Finance
       render json: { error: "invalid date" }, status: :bad_request
     end
 
+    # An id that points at nothing (or at something still in use) is a client error, not a 500.
+    rescue_from ActiveRecord::InvalidForeignKey do
+      render json: { error: "references a record that does not exist" }, status: :unprocessable_content
+    end
+
     rescue_from ActiveRecord::RecordNotFound do
       head :not_found
     end

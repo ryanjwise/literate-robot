@@ -15,7 +15,7 @@ Currently: `/finance` (expense tracking: manual entry now, bank pulls + reconcil
 Roll a key: create the new one, move clients over, revoke the old one.
 
 ## Finance API (`Authorization: Bearer <key>`)
-- `accounts`, `categories`, `expenses`, `transactions`: standard JSON CRUD under `/finance`
+- `accounts`, `categories` (each may name a `desired_account_id`), `expenses`, `transactions`: standard JSON CRUD under `/finance`
 - Accounts have a `kind` (`debit`/`credit`/`cash`), an optional `funded_by_id` (the account that pays a card) and an
   opening balance; `balance_cents` is computed (opening + transactions on/after the opening date). Credit accounts go negative.
 - `amount_cents` is signed from the account's view: negative = money out, positive = money in. Transaction `kind`
@@ -39,7 +39,7 @@ Each transaction gets a `merchant_key` (normalized description). Reconciling an 
 confirms all untouched auto-matched records. Rules are managed at `/finance/merchants` (turn `auto_assign` off to stop one).
 
 ## Forecast and transfers
-- Expenses can carry `anchor_date` (a due date), `frequency`, optional `ends_on`, `amount_mode` (`fixed` needs
+- Expenses can carry `anchor_date` (a due date), `frequency` (including `ad_hoc`: one planned bill on the anchor date, or never forecast without one), optional `ends_on`, `amount_mode` (`fixed` needs
   `expected_amount_cents`; `variable` uses the average of the last 4 matched/confirmed transactions), and `account_id`.
 - `GET /finance/forecast?from=&to=` (max 366 days) lists dated outflows (negative cents), totals per account, and
   expenses with no anchor. It does not check whether a bill was already paid early.
