@@ -28,7 +28,8 @@ RSpec.describe "Finance transfers", type: :request do
     transfer!
     get "/finance/transfers", headers: headers
     expect(json.size).to eq(1)
-    expect(json.first).to include("from_account_id" => debit.id, "to_account_id" => card.id, "amount_cents" => 30_000)
+    expect(json.first).to include("from_account_id" => debit.id, "to_account_id" => card.id, "amount_cents" => 30_000,
+                                  "paired" => true, "deletable" => true)
   end
 
   it "validates amount and accounts" do
@@ -63,5 +64,35 @@ RSpec.describe "Finance transfers", type: :request do
   it "requires auth" do
     get "/finance/transfers"
     expect(response).to have_http_status(:unauthorized)
+  end
+end
+
+RSpec.describe "Finance transfers from a bank pull", type: :request do
+  let(:headers) { auth_headers }
+  let(:account) { make_account }
+
+  def bank_leg(external_id, cents, group)
+    Finance::Transaction.create!(source: "bank:up", external_id:, account:, kind: "transfer", transfer_group_id: group,
+                                 status: "confirmed", date: "2026-10-11", amount_cents: cents, description: "Transfer")
+  end
+
+  it "lists a lone leg (partner outside the pulled range) instead of crashing" do
+    bank_leg("lone-out", -20_000, "up-lone")
+    bank_leg("lone-in", 5_000, "up-lone-in")
+
+    get "/finance/transfers", headers: headers
+    expect(response).to have_http_status(:ok)
+    by_group = json.index_by { _1["transfer_group_id"] }
+    expect(by_group["up-lone"]).to include("from_account_id" => account.id, "to_account_id" => nil,
+                                           "amount_cents" => 20_000, "paired" => false, "deletable" => false)
+    expect(by_group["up-lone-in"]).to include("from_account_id" => nil, "to_account_id" => account.id, "paired" => false)
+  end
+
+  it "will not delete a transfer that came from the bank" do
+    bank_leg("a", -100, "up-pair")
+    bank_leg("b", 100, "up-pair")
+    delete "/finance/transfers/up-pair", headers: headers
+    expect(response).to have_http_status(:unprocessable_content)
+    expect(Finance::Transaction.where(transfer_group_id: "up-pair").count).to eq(2)
   end
 end

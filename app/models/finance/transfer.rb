@@ -16,19 +16,27 @@ module Finance
     validates :amount_cents, numericality: { only_integer: true, greater_than: 0 }
     validate :accounts_exist_and_differ
 
-    # Groups the legs of every transfer into one hash per transfer.
+    class NotDeletable < StandardError; end
+
+    # Groups the legs of every transfer into one hash per transfer. A transfer
+    # imported from a bank can have a single leg (its partner was outside the
+    # pulled range), in which case the other side is nil and `paired` is false.
     def self.all
       Transaction.where(kind: "transfer").order(:date, :id).group_by(&:transfer_group_id).map do |group, legs|
-        from, to = legs.partition { _1.amount_cents.negative? }.map(&:first)
-        { transfer_group_id: group, date: from.date, amount_cents: to.amount_cents,
-          from_account_id: from.account_id, to_account_id: to.account_id,
-          description: from.description, notes: from.notes, legs: legs.map(&:id) }
+        out = legs.find { _1.amount_cents.negative? }
+        into = legs.find { _1.amount_cents.positive? }
+        first = out || into
+        { transfer_group_id: group, date: first.date, amount_cents: first.amount_cents.abs,
+          from_account_id: out&.account_id, to_account_id: into&.account_id, paired: !!(out && into), deletable: legs.all?(&:manual?),
+          description: first.description, notes: first.notes, legs: legs.map(&:id) }
       end
     end
 
+    # Only manual transfers can be deleted; bank records are fixed.
     def self.destroy_group!(group_id)
       legs = Transaction.where(kind: "transfer", transfer_group_id: group_id)
       raise ActiveRecord::RecordNotFound if legs.none?
+      raise NotDeletable, "bank records cannot be deleted" if legs.where.not(source: Transaction::MANUAL_SOURCE).exists?
       legs.destroy_all
     end
 

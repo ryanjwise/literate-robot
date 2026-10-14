@@ -24,6 +24,8 @@ module Finance
     def destroy
       Transfer.destroy_group!(params[:id])
       head :no_content
+    rescue Transfer::NotDeletable => e
+      render json: { error: e.message }, status: :unprocessable_content
     end
   end
 end

@@ -321,8 +321,9 @@ const views = {
       h("h2", {}, "Manual entry"), f,
       h("h2", {}, "Transfer between accounts"), t,
       table(["Date", "From", "To", "Amount", "Description", ""], transfers.map((x) => h("tr", {},
-        h("td", {}, x.date), h("td", {}, acct(x.from_account_id)), h("td", {}, acct(x.to_account_id)),
-        h("td", { class: "num" }, dollars(x.amount_cents)), h("td", {}, x.description || ""), h("td", {}, delBtn(x))))),
+        h("td", {}, x.date), h("td", {}, x.from_account_id ? acct(x.from_account_id) : "(outside)"), h("td", {}, x.to_account_id ? acct(x.to_account_id) : "(outside)"),
+        h("td", { class: "num" }, dollars(x.amount_cents)), h("td", {}, x.description || ""),
+        h("td", {}, x.deletable ? delBtn(x) : "bank record")))),
     ];
   },
 
