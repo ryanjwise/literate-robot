@@ -3,6 +3,6 @@ module Finance
     private
 
     def model = Expense
-    def permitted = params.expect(expense: %i[name frequency expense_category_id])
+    def permitted = params.expect(expense: %i[name frequency category_id])
   end
 end

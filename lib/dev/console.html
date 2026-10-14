@@ -51,7 +51,7 @@ function h(tag, attrs = {}, ...kids) {
     else if (v === true) el.setAttribute(k, "");
     else if (v !== false && v != null) el.setAttribute(k, v);
   }
-  for (const kid of kids.flat()) el.append(kid instanceof Node ? kid : String(kid ?? ""));
+  for (const kid of kids.flat(Infinity)) el.append(kid instanceof Node ? kid : String(kid ?? ""));
   return el;
 }
 
@@ -78,6 +78,16 @@ async function loadAccounts() {
   return list;
 }
 const acct = (id) => accountNames[id] ?? id;
+let categoryNames = {}, expenseNames = {};
+async function loadLookups() {
+  const [cats, exps] = await Promise.all([api("GET", "/categories"), api("GET", "/expenses")]);
+  categoryNames = Object.fromEntries(cats.map((c) => [c.id, c.name]));
+  expenseNames = Object.fromEntries(exps.map((e) => [e.id, e.name]));
+  return { cats, exps };
+}
+const catName = (id) => (id == null ? "" : categoryNames[id] ?? id);
+const expName = (id) => (id == null ? "" : expenseNames[id] ?? id);
+const optionList = (items, blank) => [blank != null ? h("option", { value: "" }, blank) : null, items.map((i) => h("option", { value: i.id }, i.name))];
 const toCents = (s) => Math.round(Number(s) * 100);
 const field = (label, input) => h("label", {}, label, input);
 const table = (heads, rows) => h("table", {}, h("thead", {}, h("tr", {}, heads.map((x) => h("th", {}, x)))), h("tbody", {}, rows));
@@ -93,21 +103,24 @@ async function expenseSelect(name) {
 
 function txnRows(list, extra) {
   return list.map((t) => h("tr", {},
-    h("td", {}, t.date), h("td", {}, acct(t.account_id)), h("td", {}, t.kind),
+    h("td", {}, h("a", { href: "#", onclick: (e) => { e.preventDefault(); show("detail:" + t.id); } }, t.date)),
+    h("td", {}, acct(t.account_id)), h("td", {}, t.kind),
     h("td", {}, t.source + ":" + t.external_id.slice(0, 8)),
     h("td", {}, t.description || ""), h("td", { class: "num" }, dollars(t.amount_cents)),
-    h("td", {}, t.status), h("td", {}, t.expense_id ?? ""), extra ? h("td", {}, extra(t)) : ""));
+    h("td", {}, t.status), h("td", {}, catName(t.category_id)), h("td", {}, expName(t.expense_id)),
+    extra ? h("td", {}, extra(t)) : ""));
 }
-const txnHeads = ["Date", "Account", "Kind", "Source", "Description", "Amount", "Status", "Expense"];
+const txnHeads = ["Date", "Account", "Kind", "Source", "Description", "Amount", "Status", "Category", "Expense"];
 
 const views = {
   async transactions() {
-    await loadAccounts();
-    const filter = h("select", {}, ["", "pulled", "matched", "confirmed"].map((s) => h("option", { value: s }, s || "all")));
+    await Promise.all([loadAccounts(), loadLookups()]);
+    const filter = h("select", {}, ["", "pulled", "matched", "confirmed", "ignored"].map((s) => h("option", { value: s }, s || "all")));
     const body = h("div");
     const load = async () => {
       const list = await api("GET", "/transactions" + (filter.value ? "?status=" + filter.value : ""));
-      body.replaceChildren(table(txnHeads.concat(""), txnRows(list, (t) =>
+      // Bank records and transfer legs cannot be deleted here; the API refuses.
+      body.replaceChildren(table(txnHeads.concat(""), txnRows(list, (t) => t.source !== "MAN" || t.kind === "transfer" ? "" :
         h("button", { onclick: async () => { if (confirm("Delete?")) { await run(() => api("DELETE", "/transactions/" + t.id)); load(); } } }, "delete"))));
     };
     filter.addEventListener("change", () => run(load));
@@ -117,16 +130,22 @@ const views = {
 
   async reconcile() {
     await loadAccounts();
+    const { cats, exps } = await loadLookups();
     const list = await api("GET", "/transactions?status=pulled");
     const matched = await api("GET", "/transactions?status=matched");
-    const expenses = await api("GET", "/expenses");
     const reload = () => show("reconcile");
+    const post = (t, action, body) => run(async () => { await api("POST", `/transactions/${t.id}/${action}`, body); reload(); });
     const pick = (t) => {
-      const sel = h("select", {}, expenses.map((e) => h("option", { value: e.id }, e.name)));
-      return h("span", {}, sel, h("button", { onclick: () => run(async () => { await api("POST", `/transactions/${t.id}/reconcile`, { expense_id: sel.value }); reload(); }) }, "match"));
+      if (t.kind !== "expense") return h("span", {}, h("button", { onclick: () => post(t, "confirm") }, "confirm"), h("button", { onclick: () => post(t, "ignore") }, "ignore"));
+      const cat = h("select", {}, optionList(cats, "(category)"));
+      const exp = h("select", {}, optionList(exps, "(recurring expense)"));
+      return h("span", {}, cat, exp,
+        h("button", { onclick: () => post(t, "reconcile", { category_id: cat.value, expense_id: exp.value }) }, "match"),
+        h("button", { onclick: () => post(t, "ignore") }, "ignore"));
     };
-    const confirmBtn = (t) => h("button", { onclick: () => run(async () => { await api("POST", `/transactions/${t.id}/confirm`); reload(); }) }, "confirm");
+    const confirmBtn = (t) => h("button", { onclick: () => post(t, "confirm") }, "confirm");
     return [
+      h("p", {}, "Choose a category, or a recurring expense (which sets its category), then match. Income needs no category."),
       h("h2", {}, `Pulled (${list.length})`), table(txnHeads.concat(""), txnRows(list, pick)),
       h("h2", {}, `Matched, awaiting confirmation (${matched.length})`), table(txnHeads.concat(""), txnRows(matched, confirmBtn)),
     ];
@@ -201,11 +220,10 @@ const views = {
   },
 
   async setup() {
-    const cats = await api("GET", "/expense_categories");
-    const exps = await api("GET", "/expenses");
+    const { cats, exps } = await loadLookups();
     const catForm = h("form", { onsubmit: (e) => { e.preventDefault(); run(async () => {
       const d = new FormData(catForm);
-      await api("POST", "/expense_categories", { expense_category: { name: d.get("name"), desired_source: d.get("desired_source") } });
+      await api("POST", "/categories", { category: { name: d.get("name"), desired_source: d.get("desired_source") } });
       show("setup"); }); } },
       field("Name", h("input", { name: "name", required: true })),
       field("Desired source", h("input", { name: "desired_source" })),
@@ -213,28 +231,87 @@ const views = {
     const freqs = ["daily", "weekly", "fortnightly", "monthly", "quarterly", "biannually", "annually"];
     const expForm = h("form", { onsubmit: (e) => { e.preventDefault(); run(async () => {
       const d = new FormData(expForm);
-      await api("POST", "/expenses", { expense: { name: d.get("name"), frequency: d.get("frequency"), expense_category_id: d.get("expense_category_id") } });
+      await api("POST", "/expenses", { expense: { name: d.get("name"), frequency: d.get("frequency"), category_id: d.get("category_id") } });
       show("setup"); }); } },
       field("Name", h("input", { name: "name", required: true })),
       field("Frequency", h("select", { name: "frequency" }, freqs.map((x) => h("option", {}, x)))),
-      field("Category", h("select", { name: "expense_category_id", required: true }, cats.map((c) => h("option", { value: c.id }, c.name)))),
+      field("Category", h("select", { name: "category_id", required: true }, cats.map((c) => h("option", { value: c.id }, c.name)))),
       h("button", { type: "submit" }, "Add expense"));
     return [
       h("h2", {}, "Categories"), table(["ID", "Name", "Desired source"], cats.map((c) => h("tr", {}, h("td", {}, c.id), h("td", {}, c.name), h("td", {}, c.desired_source || "")))), catForm,
-      h("h2", {}, "Expenses"), table(["ID", "Name", "Frequency", "Category"], exps.map((x) => h("tr", {}, h("td", {}, x.id), h("td", {}, x.name), h("td", {}, x.frequency), h("td", {}, x.expense_category_id)))), expForm,
+      h("h2", {}, "Expenses"), table(["ID", "Name", "Frequency", "Category"], exps.map((x) => h("tr", {}, h("td", {}, x.id), h("td", {}, x.name), h("td", {}, x.frequency), h("td", {}, catName(x.category_id))))), expForm,
     ];
   },
 };
 
+
+// Single-transaction view: every stored field, plus an edit form limited to
+// what the API allows (review fields only for bank records, nearly all for manual).
+async function detail(id) {
+  const [accounts, { cats, exps }] = [await loadAccounts(), await loadLookups()];
+  const t = await api("GET", "/transactions/" + id);
+  const manual = t.source === "MAN", transfer = t.kind === "transfer";
+  const editable = transfer ? ["description", "notes"]
+    : manual ? ["kind", "account_id", "date", "amount_cents", "description", "notes", "category_id", "expense_id", "status"]
+    : ["notes", "category_id", "expense_id", "status"];
+  const names = { account_id: acct(t.account_id), category_id: catName(t.category_id), expense_id: expName(t.expense_id) };
+  const rows = Object.entries(t).map(([k, v]) => h("tr", {}, h("th", {}, k),
+    h("td", {}, k === "amount_cents" ? `${v} (${dollars(v)})` : String(v ?? "")),
+    h("td", {}, names[k] ?? ""), h("td", {}, editable.includes(k) ? "editable" : "fixed")));
+
+  const input = (k) => {
+    const v = t[k] ?? "";
+    switch (k) {
+      case "notes": return h("textarea", { name: k }, v);
+      case "description": return h("input", { name: k, value: v });
+      case "date": return h("input", { name: k, type: "date", value: v });
+      case "amount_cents": return h("input", { name: k, type: "number", step: "0.01", value: dollars(v) });
+      case "kind": return h("select", { name: k }, ["expense", "income"].map((x) => h("option", { selected: x === v }, x)));
+      case "status": return h("select", { name: k }, ["pulled", "matched", "confirmed", "ignored"].map((x) => h("option", { selected: x === v }, x)));
+      case "account_id": return h("select", { name: k }, accounts.map((a) => h("option", { value: a.id, selected: a.id === v }, a.name)));
+      case "category_id": return h("select", { name: k }, optionList(cats, "(none)"));
+      case "expense_id": return h("select", { name: k }, optionList(exps, "(none)"));
+    }
+  };
+  const f = h("form", { onsubmit: (e) => { e.preventDefault(); run(async () => {
+    const d = new FormData(f), body = {};
+    for (const k of editable) {
+      let v = d.get(k);
+      if (k === "amount_cents") v = toCents(v);
+      else if (["category_id", "expense_id"].includes(k)) v = v === "" ? null : v;
+      body[k] = v;
+    }
+    await api("PATCH", "/transactions/" + id, { transaction: body });
+    say("Saved."); show("detail:" + id);
+  }); } },
+    ...editable.map((k) => field(k + (k === "amount_cents" ? " ($, signed)" : ""), input(k))),
+    h("button", { type: "submit" }, "Save"));
+  // Select current values for the lookup selects (options are built before values are known).
+  for (const k of ["category_id", "expense_id"]) { const el = f.elements[k]; if (el) el.value = t[k] ?? ""; }
+  const note = transfer ? "Transfer leg: only description and notes can change here."
+    : manual ? "Manual record: everything except source and external id can be edited."
+    : "Bank record: only notes, category, expense and status can be edited.";
+  return [
+    h("button", { onclick: () => show("transactions") }, "← back"),
+    h("h2", {}, `Transaction ${t.id}`), h("p", {}, note),
+    table(["Field", "Value", "Resolved", ""], rows),
+    h("h2", {}, "Edit"), f,
+  ];
+}
+
 async function run(fn) { try { say(""); await fn(); } catch (e) { say(e.message, true); } }
 
-let current = "transactions";
+let current = decodeURIComponent(location.hash.slice(1)) || "transactions"; // e.g. /#reconcile, /#detail:2
 async function show(name) {
   current = name;
+  try { history.replaceState(null, "", "#" + name); } catch {}
   $("tabs").replaceChildren(...Object.keys(views).map((k) =>
     h("button", { "aria-current": String(k === name), onclick: () => show(k) }, k)));
   $("view").replaceChildren();
-  await run(async () => { $("view").replaceChildren(...(await views[name]())); });
+  await run(async () => {
+    const out = name.startsWith("detail:") ? await detail(name.slice(7)) : await views[name]();
+    $("view").replaceChildren(...out);
+  });
 }
 show(current);
 </script>

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_14_000003) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_14_000004) do
   create_table "api_keys", force: :cascade do |t|
     t.string "namespace", null: false
     t.string "name", null: false
@@ -35,21 +35,21 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_14_000003) do
     t.check_constraint "kind IN ('debit','credit','cash')", name: "finance_accounts_kind_check"
   end
 
-  create_table "finance_expense_categories", force: :cascade do |t|
+  create_table "finance_categories", force: :cascade do |t|
     t.string "name", null: false
     t.string "desired_source"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.index ["name"], name: "index_finance_expense_categories_on_name", unique: true
+    t.index ["name"], name: "index_finance_categories_on_name", unique: true
   end
 
   create_table "finance_expenses", force: :cascade do |t|
     t.string "name", null: false
     t.string "frequency", null: false
-    t.integer "expense_category_id", null: false
+    t.integer "category_id", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.index ["expense_category_id"], name: "index_finance_expenses_on_expense_category_id"
+    t.index ["category_id"], name: "index_finance_expenses_on_category_id"
     t.check_constraint "frequency IN ('daily','weekly','fortnightly','monthly','quarterly','biannually','annually')", name: "finance_expenses_frequency_check"
   end
 
@@ -67,19 +67,22 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_14_000003) do
     t.integer "account_id", null: false
     t.string "kind", default: "expense", null: false
     t.string "transfer_group_id"
+    t.integer "category_id"
     t.index ["account_id"], name: "index_finance_transactions_on_account_id"
+    t.index ["category_id"], name: "index_finance_transactions_on_category_id"
     t.index ["expense_id"], name: "index_finance_transactions_on_expense_id"
     t.index ["source", "external_id"], name: "index_finance_transactions_on_source_and_external_id", unique: true
     t.index ["status"], name: "index_finance_transactions_on_status"
     t.check_constraint "(kind = 'transfer') = (transfer_group_id IS NOT NULL)", name: "finance_transactions_transfer_group_check"
     t.check_constraint "amount_cents <> 0", name: "finance_transactions_amount_nonzero_check"
     t.check_constraint "kind IN ('expense','income','transfer')", name: "finance_transactions_kind_check"
-    t.check_constraint "status = 'pulled' OR expense_id IS NOT NULL OR kind <> 'expense'", name: "finance_transactions_reconciled_has_expense_check"
-    t.check_constraint "status IN ('pulled','matched','confirmed')", name: "finance_transactions_status_check"
+    t.check_constraint "status IN ('pulled','ignored') OR category_id IS NOT NULL OR kind <> 'expense'", name: "finance_transactions_reconciled_has_category_check"
+    t.check_constraint "status IN ('pulled','matched','confirmed','ignored')", name: "finance_transactions_status_check"
   end
 
   add_foreign_key "finance_accounts", "finance_accounts", column: "funded_by_id"
-  add_foreign_key "finance_expenses", "finance_expense_categories", column: "expense_category_id"
+  add_foreign_key "finance_expenses", "finance_categories", column: "category_id"
   add_foreign_key "finance_transactions", "finance_accounts", column: "account_id"
+  add_foreign_key "finance_transactions", "finance_categories", column: "category_id"
   add_foreign_key "finance_transactions", "finance_expenses", column: "expense_id"
 end

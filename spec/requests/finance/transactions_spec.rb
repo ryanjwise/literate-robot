@@ -3,8 +3,8 @@ require "rails_helper"
 RSpec.describe "Finance transactions", type: :request do
   let(:headers) { auth_headers }
   let(:account) { make_account }
-  let(:category) { Finance::ExpenseCategory.create!(name: "Utilities") }
-  let(:expense) { Finance::Expense.create!(name: "Power", frequency: "monthly", expense_category: category) }
+  let(:category) { Finance::Category.create!(name: "Utilities") }
+  let(:expense) { Finance::Expense.create!(name: "Power", frequency: "monthly", category: category) }
 
   it "creates a manual transaction with a generated external id" do
     post "/finance/transactions", headers: headers,
@@ -59,7 +59,7 @@ RSpec.describe "Finance transactions", type: :request do
     expect(t.status).to eq("pulled")
 
     post "/finance/transactions/#{t.id}/reconcile", headers: headers, params: { expense_id: expense.id }
-    expect(json).to include("status" => "matched", "expense_id" => expense.id)
+    expect(json).to include("status" => "matched", "expense_id" => expense.id, "category_id" => category.id)
 
     post "/finance/transactions/#{t.id}/confirm", headers: headers
     expect(json["status"]).to eq("confirmed")

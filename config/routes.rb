@@ -7,12 +7,13 @@ Rails.application.routes.draw do
   namespace :finance do
     resources :accounts
     resources :transfers, only: %i[index create destroy]
-    resources :expense_categories
+    resources :categories
     resources :expenses
     resources :transactions do
       member do
         post :reconcile
         post :confirm
+        post :ignore
       end
     end
   end
