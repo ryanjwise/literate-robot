@@ -52,8 +52,11 @@ module Finance
           end
         end
 
+        legs_per_group = groups.values.tally
+        lone = up_txns.select { groups.key?(_1["id"]) && legs_per_group[groups[_1["id"]]] == 1 }
+        round_ups = lone.count { round_up?(_1) }
         { since: @since, transactions: counts, changed_after_review:,
-          unpaired_transfers: groups.values.tally.count { |_, n| n == 1 },
+          round_up_transfers: round_ups, unpaired_transfers: lone.size - round_ups,
           accounts: linked.map { |up_id, (account, created)| account_summary(up_accounts, up_id, account, created) } }
       end
 
@@ -127,6 +130,10 @@ module Finance
         rel_id(u, "account") == rel_id(t, "transferAccount") && rel_id(u, "transferAccount") == rel_id(t, "account") &&
           cents(u) == -cents(t) && (created_at(t) - created_at(u)).abs <= PAIR_WINDOW_SECONDS
       end
+
+      # UP shows a Round Up as only the saver's incoming transfer; the outgoing side is
+      # part of the purchase, so a lone "Round Up" leg is expected, not a missing pair.
+      def round_up?(t) = t.dig("attributes", "description").to_s.casecmp?(Transfer::ROUND_UP_DESCRIPTION)
 
       def cents(t) = t.dig("attributes", "amount", "valueInBaseUnits")
       def created_at(t) = Time.iso8601(t.dig("attributes", "createdAt"))

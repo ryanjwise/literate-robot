@@ -88,6 +88,15 @@ RSpec.describe "Finance transfers from a bank pull", type: :request do
     expect(by_group["up-lone-in"]).to include("from_account_id" => nil, "to_account_id" => account.id, "paired" => false)
   end
 
+  it "flags Round Ups" do
+    Finance::Transaction.create!(source: "bank:up", external_id: "r", account:, kind: "transfer", transfer_group_id: "up-r",
+                                 status: "confirmed", date: "2026-10-11", amount_cents: 7, description: "Round Up")
+    bank_leg("o", -20_000, "up-other")
+    get "/finance/transfers", headers: headers
+    flags = json.to_h { [_1["transfer_group_id"], _1["round_up"]] }
+    expect(flags).to eq("up-r" => true, "up-other" => false)
+  end
+
   it "will not delete a transfer that came from the bank" do
     bank_leg("a", -100, "up-pair")
     bank_leg("b", 100, "up-pair")

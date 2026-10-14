@@ -243,7 +243,8 @@ const views = {
       out.replaceChildren(
         h("h2", {}, r.dry_run ? "Dry run (nothing saved)" : "Pulled"),
         h("p", {}, `Since ${r.since}: ${r.transactions.created} new, ${r.transactions.updated} updated, ${r.transactions.unchanged} unchanged.` +
-          (r.unpaired_transfers ? ` ${r.unpaired_transfers} transfer leg(s) had no matching pair.` : "")),
+          (r.round_up_transfers ? ` ${r.round_up_transfers} Round Up transfer(s).` : "") +
+          (r.unpaired_transfers ? ` ${r.unpaired_transfers} other transfer leg(s) had no matching pair.` : "")),
         r.changed_after_review.length ? h("p", {}, `Bank changed ${r.changed_after_review.length} record(s) you had already reviewed: ids ${r.changed_after_review.join(", ")}.`) : "",
         table(["Account", "New", "UP balance", "Our balance", "Drift"], r.accounts.map((a) => h("tr", {},
           h("td", {}, a.name), h("td", {}, a.created ? "yes" : ""), h("td", { class: "num" }, dollars(a.up_balance_cents)),

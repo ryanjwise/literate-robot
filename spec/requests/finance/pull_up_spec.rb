@@ -64,6 +64,14 @@ RSpec.describe "Finance UP pull", type: :request do
     expect(Finance::Transaction.find_by!(external_id: "t-out").transfer_group_id).to be_present
   end
 
+  it "counts a lone Round Up leg separately from genuinely unpaired transfers" do
+    transactions << up_txn("t-round", account: "acc-save", cents: 7, desc: "Round Up", transfer: "acc-spend",
+                           at: "2026-10-12T09:30:05+11:00")
+    pull
+    expect(json).to include("round_up_transfers" => 1, "unpaired_transfers" => 0)
+    expect(Finance::Transaction.find_by!(external_id: "t-round")).to have_attributes(kind: "transfer", status: "confirmed")
+  end
+
   it "is idempotent: a second pull creates nothing" do
     pull
     expect { pull }.not_to change { Finance::Transaction.count }

@@ -18,6 +18,8 @@ module Finance
 
     class NotDeletable < StandardError; end
 
+    ROUND_UP_DESCRIPTION = "Round Up".freeze
+
     # Groups the legs of every transfer into one hash per transfer. A transfer
     # imported from a bank can have a single leg (its partner was outside the
     # pulled range), in which case the other side is nil and `paired` is false.
@@ -28,6 +30,7 @@ module Finance
         first = out || into
         { transfer_group_id: group, date: first.date, amount_cents: first.amount_cents.abs,
           from_account_id: out&.account_id, to_account_id: into&.account_id, paired: !!(out && into), deletable: legs.all?(&:manual?),
+          round_up: legs.all? { _1.description.to_s.casecmp?(ROUND_UP_DESCRIPTION) },
           description: first.description, notes: first.notes, legs: legs.map(&:id) }
       end
     end
