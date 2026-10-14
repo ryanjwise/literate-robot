@@ -22,3 +22,23 @@ RSpec.describe "Dev console", type: :request do
     expect(response.body).to include('const INJECTED_KEY = ""')
   end
 end
+
+RSpec.describe "Dev console UP token", type: :request do
+  around do |ex|
+    old = ENV["UP_API_TOKEN"]
+    ex.run
+  ensure
+    ENV["UP_API_TOKEN"] = old
+  end
+
+  it "injects the UP token as an escaped JSON string, empty when unset" do
+    ENV["UP_API_TOKEN"] = %(up:"</script>)
+    get "/"
+    expect(response.body).not_to include("</script>\"")
+    expect(response.body).to include('const INJECTED_UP_TOKEN = "up:\\"\\u003c/script\\u003e"')
+
+    ENV.delete("UP_API_TOKEN")
+    get "/"
+    expect(response.body).to include('const INJECTED_UP_TOKEN = ""')
+  end
+end

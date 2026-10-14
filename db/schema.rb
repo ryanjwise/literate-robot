@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_14_000007) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_14_000008) do
   create_table "api_keys", force: :cascade do |t|
     t.string "namespace", null: false
     t.string "name", null: false
@@ -30,8 +30,12 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_14_000007) do
     t.date "opening_balance_on"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "external_source"
+    t.string "external_id"
+    t.index ["external_source", "external_id"], name: "index_finance_accounts_on_external_source_and_external_id", unique: true
     t.index ["funded_by_id"], name: "index_finance_accounts_on_funded_by_id"
     t.index ["name"], name: "index_finance_accounts_on_name", unique: true
+    t.check_constraint "(external_source IS NULL) = (external_id IS NULL)", name: "finance_accounts_external_pair_check"
     t.check_constraint "kind IN ('debit','credit','cash')", name: "finance_accounts_kind_check"
   end
 
@@ -92,6 +96,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_14_000007) do
     t.integer "category_id"
     t.string "merchant_key"
     t.boolean "auto_assigned", default: false, null: false
+    t.string "bank_status"
+    t.datetime "settled_at"
+    t.string "bank_category"
+    t.string "raw_text"
     t.index ["account_id"], name: "index_finance_transactions_on_account_id"
     t.index ["category_id"], name: "index_finance_transactions_on_category_id"
     t.index ["expense_id"], name: "index_finance_transactions_on_expense_id"

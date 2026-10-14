@@ -33,6 +33,7 @@
 
 <script>
 const INJECTED_KEY = __INJECTED_KEY__;
+const INJECTED_UP_TOKEN = __INJECTED_UP_TOKEN__;
 
 const $ = (id) => document.getElementById(id);
 const keyInput = $("key");
@@ -222,6 +223,39 @@ const views = {
     to.addEventListener("change", load); inc.addEventListener("change", load);
     await load();
     return [h("div", { style: "display:flex;gap:.5rem;align-items:end" }, field("Cover bills until", to), h("label", {}, inc, " include upcoming bills")), out];
+  },
+
+  async pull() {
+    await loadAccounts();
+    const token = h("input", { type: "password", autocomplete: "off", placeholder: "UP personal access token", value: INJECTED_UP_TOKEN });
+    const since = h("input", { type: "date", value: new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10) });
+    const dry = h("input", { type: "checkbox", checked: true });
+    const out = h("div");
+    const go = () => run(async () => {
+      out.replaceChildren(h("p", {}, "Pulling…"));
+      const res = await fetch("/finance/pull/up", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + keyInput.value, "X-Bank-Token": token.value, "Content-Type": "application/json" },
+        body: JSON.stringify({ since: since.value, dry_run: dry.checked }),
+      });
+      const r = await res.json().catch(() => ({}));
+      if (!res.ok) { out.replaceChildren(); throw new Error(`${res.status}: ${r.error ?? JSON.stringify(r.errors ?? r)}`); }
+      out.replaceChildren(
+        h("h2", {}, r.dry_run ? "Dry run (nothing saved)" : "Pulled"),
+        h("p", {}, `Since ${r.since}: ${r.transactions.created} new, ${r.transactions.updated} updated, ${r.transactions.unchanged} unchanged.` +
+          (r.unpaired_transfers ? ` ${r.unpaired_transfers} transfer leg(s) had no matching pair.` : "")),
+        r.changed_after_review.length ? h("p", {}, `Bank changed ${r.changed_after_review.length} record(s) you had already reviewed: ids ${r.changed_after_review.join(", ")}.`) : "",
+        table(["Account", "New", "UP balance", "Our balance", "Drift"], r.accounts.map((a) => h("tr", {},
+          h("td", {}, a.name), h("td", {}, a.created ? "yes" : ""), h("td", { class: "num" }, dollars(a.up_balance_cents)),
+          h("td", { class: "num" }, dollars(a.computed_balance_cents)), h("td", { class: "num" }, dollars(a.drift_cents))))));
+    });
+    return [
+      h("p", {}, "Fetches accounts and transactions from UP. The token is sent for this request only; the server never stores or logs it."),
+      h("div", { style: "display:flex;gap:.5rem;flex-wrap:wrap;align-items:end" },
+        field("UP token", token), field("Since", since), h("label", {}, dry, " dry run (preview only)"),
+        h("button", { onclick: go }, "Pull from UP")),
+      out,
+    ];
   },
 
   async accounts() {

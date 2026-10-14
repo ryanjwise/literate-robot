@@ -12,6 +12,9 @@ module Finance
     validates :name, presence: true, uniqueness: true
     validates :kind, inclusion: { in: KINDS }
     validates :opening_balance_cents, numericality: { only_integer: true }
+    validates :external_id, presence: true, if: -> { external_source.present? }
+    validates :external_source, presence: true, if: -> { external_id.present? }
+    validates :external_id, uniqueness: { scope: :external_source }, allow_nil: true
     validate :not_funded_by_itself
     validate :funding_chain_has_no_cycle
 

@@ -10,6 +10,7 @@ Rails.application.routes.draw do
       get :needed, on: :collection
     end
     get :forecast, to: "forecasts#show"
+    post "pull/up", to: "pulls#up"
     resources :categories
     resources :expenses
     resources :merchants

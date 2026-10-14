@@ -47,6 +47,19 @@ confirms all untouched auto-matched records. Rules are managed at `/finance/merc
   the `funded_by` chain: `max(0, -(balance + upcoming bills - what it sends on))`. The top of a chain reports a shortfall.
 - `GET /finance/transactions` filters: `status`, `account_id`, `category_id`, `expense_id`, `kind`, `from`, `to`, `q`.
 
+## UP bank pull
+`POST /finance/pull/up` with headers `Authorization: Bearer <our key>` and `X-Bank-Token: <UP personal access token>`;
+params `since` (YYYY-MM-DD, default 30 days ago) and `dry_run=true` to preview. The token is used for that request only and
+is never stored or logged; errors from UP come back as 502 (429 if rate limited).
+- Accounts are created from UP's (`external_source: bank:up`, `external_id`), with an opening balance chosen so the computed
+  balance equals UP's at pull time. Each response reports per-account `drift_cents` (UP minus ours).
+- Transactions are identified by (`bank:up`, UP id), so re-pulling never duplicates. Bank fields refresh (e.g. held -> settled);
+  your category, notes and status are never touched. Records you had already reviewed that the bank then changed are listed in
+  `changed_after_review`.
+- Positive amounts are `income`, negative `expense`; transfers between your UP accounts are paired into one transfer (confirmed).
+- UP's category is kept in `bank_category` as a hint only; new bank records still go through merchant memory.
+- To link a manual account to an UP account instead of creating a new one, set its `external_source` (`bank:up`) and `external_id`.
+
 ## Dev helpers
 - `bin/rails dev:sample_data` adds sample pulled records (source `bank:sample`) to try the reconcile UI; safe to re-run.
 - `bin/rails dev:clear_sample_data` removes them.

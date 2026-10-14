@@ -12,6 +12,9 @@ module Finance
 
     # amount_cents is signed from the account's point of view:
     # negative = money out, positive = money in.
+    # Set by a bank pull so the bank's own fields can be refreshed (users cannot).
+    attr_accessor :bank_sync
+
     belongs_to :account
     belongs_to :category, optional: true
     belongs_to :expense, optional: true
@@ -64,6 +67,7 @@ module Finance
     end
 
     def protected_fields_unchanged
+      return if bank_sync
       editable = source_was == MANUAL_SOURCE ? attribute_names - IDENTITY_FIELDS : BANK_EDITABLE_FIELDS
       (changed - editable).each do |attr|
         errors.add(attr, source_was == MANUAL_SOURCE ? "cannot be changed" : "cannot be changed on a bank record")
